@@ -1,0 +1,17 @@
+motions:
+- file: locomotion/lafan1_walk1_subject1_100_1170.json
+  weight: null
+- file: locomotion/lafan1_walk1_subject1_100_1170_mirror.json
+  weight: null
+- file: locomotion/lafan1_walk1_subject1_2460_3680.json
+  weight: null
+- file: locomotion/lafan1_walk1_subject1_2460_3680_mirror.json
+  weight: null
+- file: locomotion/lafan1_walk1_subject5_5740_6830.json
+  weight: null
+- file: locomotion/lafan1_walk1_subject5_5740_6830_mirror.json
+  weight: null
+- file: locomotion/lafan1_walk1_subject5_80_1715.json
+  weight: null
+- file: locomotion/lafan1_walk1_subject5_80_1715_mirror.json
+  weight: null

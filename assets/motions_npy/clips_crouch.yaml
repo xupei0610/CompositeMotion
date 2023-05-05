@@ -1,0 +1,9 @@
+motions:
+- file: locomotion/crouch_lafan1_walk3_subject5_320_1410.npy
+  weight: null
+- file: locomotion/crouch_lafan1_walk3_subject5_320_1410_mirror.npy
+  weight: null
+- file: locomotion/crouch_lafan1_walk3_subject5_2490_2735.npy
+  weight: null
+- file: locomotion/crouch_lafan1_walk3_subject5_2490_2735_mirror.npy
+  weight: null

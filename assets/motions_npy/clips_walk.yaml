@@ -1,0 +1,17 @@
+motions:
+- file: locomotion/lafan1_walk1_subject1_100_1170.npy
+  weight: null
+- file: locomotion/lafan1_walk1_subject1_100_1170_mirror.npy
+  weight: null
+- file: locomotion/lafan1_walk1_subject1_2460_3680.npy
+  weight: null
+- file: locomotion/lafan1_walk1_subject1_2460_3680_mirror.npy
+  weight: null
+- file: locomotion/lafan1_walk1_subject5_5740_6830.npy
+  weight: null
+- file: locomotion/lafan1_walk1_subject5_5740_6830_mirror.npy
+  weight: null
+- file: locomotion/lafan1_walk1_subject5_80_1715.npy
+  weight: null
+- file: locomotion/lafan1_walk1_subject5_80_1715_mirror.npy
+  weight: null

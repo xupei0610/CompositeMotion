@@ -1,0 +1,9 @@
+motions:
+- file: locomotion/lafan1_run1_subject5_160_2105.json
+  weight: null
+- file: locomotion/lafan1_run1_subject5_160_2105_mirror.json
+  weight: null
+- file: locomotion/lafan1_run2_subject1_145_2445.json
+  weight: null
+- file: locomotion/lafan1_run2_subject1_145_2445_mirror.json
+  weight: null
