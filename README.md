@@ -3,6 +3,7 @@
 This is the official implementation for
 
 - _*Composite Motion Learning and Task Control*_
+[[arXiv](https://arxiv.org/abs/2305.03286)]
 [[Youtube](https://youtu.be/mcRAxwoTh3E)]
 (SIGGRAPH'23, [TOG](https://dl.acm.org/doi/abs/10.1145/3592447))
 
