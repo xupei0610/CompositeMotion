@@ -69,11 +69,10 @@ If you use the code or provided motions for your work, please consider citing ou
     @article{composite,
         author = {Xu, Pei and Shang, Xiumin and Zordan, Victor and Karamouzas, Ioannis},
         title = {Composite Motion Learning with Task Control},
-        journal = {ACM Transactions on Graphics (TOG)},
+        journal = {ACM Transactions on Graphics},
         publisher = {ACM New York, NY, USA}
         year = {2023},
         volume = {42},
-        number = {4},
         doi = {10.1145/3592447},
         keywords = {physics-based control, character animation, motion synthesis, reinforcement learning, multi-objective learning, incremental learning, GAN}
     }
