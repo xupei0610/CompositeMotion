@@ -7,7 +7,7 @@ This is the official implementation for
 [[Youtube](https://youtu.be/mcRAxwoTh3E)]
 (SIGGRAPH'23, [TOG](https://dl.acm.org/doi/abs/10.1145/3592447))
 
-- _*A GAN-Like Approach for Physics-Based Imitation Learning and Interactive Control*_
+- _*A GAN-Like Approach for Physics-Based Imitation Learning and Interactive Character Control*_
 [[arXiv](https://arxiv.org/abs/2105.10066)]
 [[Youtube](https://www.youtube.com/watch?v=VHMyvDD3B_o)]
 (SCA'21, [PACMCGIT](https://dl.acm.org/doi/abs/10.1145/3480148))
@@ -80,7 +80,7 @@ If you use the code or provided motions for your work, please consider citing ou
 
     @article{iccgan,
         author = {Xu, Pei and Karamouzas, Ioannis},
-        title = {A GAN-Like Approach for Physics-Based Imitation Learning and Interactive Control},
+        title = {A GAN-Like Approach for Physics-Based Imitation Learning and Interactive Character Control},
         journal = {Proceedings of the ACM on Computer Graphics and Interactive Techniques},
         publisher = {ACM New York, NY, USA}
         year = {2021},
