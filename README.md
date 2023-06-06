@@ -70,7 +70,7 @@ If you use the code or provided motions for your work, please consider citing ou
         author = {Xu, Pei and Shang, Xiumin and Zordan, Victor and Karamouzas, Ioannis},
         title = {Composite Motion Learning with Task Control},
         journal = {ACM Transactions on Graphics},
-        publisher = {ACM New York, NY, USA}
+        publisher = {ACM New York, NY, USA},
         year = {2023},
         volume = {42},
         number = {4},
@@ -82,7 +82,7 @@ If you use the code or provided motions for your work, please consider citing ou
         author = {Xu, Pei and Karamouzas, Ioannis},
         title = {A GAN-Like Approach for Physics-Based Imitation Learning and Interactive Character Control},
         journal = {Proceedings of the ACM on Computer Graphics and Interactive Techniques},
-        publisher = {ACM New York, NY, USA}
+        publisher = {ACM New York, NY, USA},
         year = {2021},
         volume = {4},
         number = {3},
