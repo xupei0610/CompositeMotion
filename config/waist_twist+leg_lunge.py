@@ -3,7 +3,7 @@ import numpy as np
 env_cls = "ICCGANHumanoid"
 env_params = dict(
     episode_length = 300,
-    motion_file = "assets/motions/gym/leg_lunge.json"
+    motion_file = "assets/motions/gym_npy/leg_lunge.npy"
 )
 
 training_params = dict(
@@ -14,7 +14,7 @@ training_params = dict(
 
 discriminators = {
     "waist_twist/upper": dict(
-        motion_file = "assets/motions/gym/waist_twist.json",
+        motion_file = "assets/motions/gym_npy/waist_twist.npy",
         key_links = ["torso", "head", "right_upper_arm", "right_lower_arm", "right_hand", "left_upper_arm", "left_lower_arm", "left_hand"],
         parent_link = "pelvis",
         local_pos = True,
