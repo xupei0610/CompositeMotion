@@ -1,8 +1,8 @@
-# Composite Motion Learning and Task Control
+# Composite Motion Learning with Task Control
 
 This is the official implementation for
 
-- _*Composite Motion Learning and Task Control*_
+- _*Composite Motion Learning with Task Control*_
 [[arXiv](https://arxiv.org/abs/2305.03286)]
 [[Youtube](https://youtu.be/mcRAxwoTh3E)]
 (SIGGRAPH'23, [TOG](https://dl.acm.org/doi/abs/10.1145/3592447))
@@ -70,7 +70,7 @@ If you use the code or provided motions for your work, please consider citing ou
         author = {Xu, Pei and Shang, Xiumin and Zordan, Victor and Karamouzas, Ioannis},
         title = {Composite Motion Learning with Task Control},
         journal = {ACM Transactions on Graphics},
-        publisher = {ACM New York, NY, USA},
+        publisher = {ACM New York, NY, USA}
         year = {2023},
         volume = {42},
         number = {4},
@@ -82,7 +82,7 @@ If you use the code or provided motions for your work, please consider citing ou
         author = {Xu, Pei and Karamouzas, Ioannis},
         title = {A GAN-Like Approach for Physics-Based Imitation Learning and Interactive Character Control},
         journal = {Proceedings of the ACM on Computer Graphics and Interactive Techniques},
-        publisher = {ACM New York, NY, USA},
+        publisher = {ACM New York, NY, USA}
         year = {2021},
         volume = {4},
         number = {3},
