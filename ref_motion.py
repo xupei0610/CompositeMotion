@@ -82,12 +82,14 @@ class ReferenceMotion():
                     r.append([])
                     t.append(frame["base_position"])
                     for k in skeleton.node_names:
-                        if k not in frame: continue
-                        q = frame[k]
-                        if len(q) == 1:
-                            half_theta = q[0]/2
-                            s, c = np.sin(half_theta), np.cos(half_theta)
-                            q = [0, s, 0, c] # assume joint is always along y axis
+                        if k in frame:
+                            q = frame[k]
+                            if len(q) == 1:
+                                half_theta = q[0]/2
+                                s, c = np.sin(half_theta), np.cos(half_theta)
+                                q = [0, s, 0, c] # assume joint is always along y axis
+                        else:
+                            q = [0,0,0,1]
                         r[-1].append(q)
                 r = torch.from_numpy(np.array(r))
                 t = torch.from_numpy(np.array(t))
