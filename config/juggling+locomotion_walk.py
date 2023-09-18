@@ -28,7 +28,7 @@ training_params = dict(
 
 discriminators = {
     "juggling/hand": dict(
-        motion_file = "assets/motions/gym_npy/juggling.npy",
+        motion_file = "assets/motions_npy/acrobatics/juggling.npy",
         key_links = ["right_upper_arm", "right_lower_arm", "right_hand", "left_upper_arm", "left_lower_arm", "left_hand"],
         parent_link = "torso",
         local_pos = True,
