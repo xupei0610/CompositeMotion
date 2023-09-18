@@ -251,7 +251,7 @@ class ACModel(torch.nn.Module):
                 g = g[...,:self.goal_dim]
             return a, self.eval_(s, seq_end_frame, g, unnorm), lp
         else:
-            return pi.mean,
+            return pi.mean
 
     def evaluate(self, obs, seq_end_frame, unnorm=False):
         s, g = self.observe(obs)
