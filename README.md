@@ -39,9 +39,9 @@ Download IsaacGym Pr4 from the [official site](https://developer.nvidia.com/isaa
 
 We provide our configure files in `config` folder for reference. To reproduce the examples shown in the paper, e.g. `Aiming+Crouch`, please run the training by
 
-    $ python main.py config/aim+locomotion_crouch.py --ckpt ckpt_aim+crouch
+    $ python main.py config/juggling+locomotion_walk.py --ckpt ckpt_juggling+locomotion_walk
 
-The training results (model and log) will be generated in the `ckpt_aim+crouch` folder.
+The training results (model and log) will be generated in the `ckpt_juggling+locomotion_walk` folder.
 
 The training can be done on a single GPU. Use `--device` option to specify the device used for training (default: 0). All our results were obtained using machines equipped with Nvidia V100 or A100 GPU. 
 
@@ -52,7 +52,7 @@ The training can be done on a single GPU. Use `--device` option to specify the d
 
 We provide pretrained policy models in `pretrained` folder. To evaluate a pretrained policy, e.g. `Aiming+Crouch`, please run
 
-    $ python main.py config/aim+locomotion_crouch.py --ckpt pretrained/aim+locomotion_crouch --test
+    $ python main.py config/juggling+locomotion_walk.py --ckpt pretrained/juggling+locomotion_walk --test
 
 
 ## Motion Data Copyright
