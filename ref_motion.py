@@ -203,7 +203,7 @@ class ReferenceMotion():
         dt = self.motion_dt[motion_ids]
 
         phase = np.clip(motion_times / motion_len, 0.0, 1.0)
-        fid0 = (phase * (num_frames - 1)).astype(np.int)
+        fid0 = (phase * (num_frames - 1)).astype(int)
         fid1 = np.minimum(fid0 + 1, num_frames - 1)
         frac = np.minimum((motion_times - fid0 * dt) / dt, 1.)
 
