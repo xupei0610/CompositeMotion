@@ -253,7 +253,7 @@ def train(env, model, ckpt_dir, training_params):
                     dtype=ob_seq_lens.dtype, device=ob_seq_lens.device)
                 mask = length.unsqueeze_(0) < ob_seq_lens.unsqueeze(1)
                 states_raw = model.observe(states, norm=False)[0]
-                model.actor_ob_normalizer.update(states_raw[mask])
+                model.ob_normalizer.update(states_raw[mask])
                 if model.value_normalizer is not None:
                     model.value_normalizer.update(returns)
                     returns = model.value_normalizer(returns)
