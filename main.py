@@ -304,8 +304,9 @@ def train(env, model, ckpt_dir, training_params):
 
             lifetime = env.lifetime.to(torch.float32).mean().item()
             policy_loss, value_loss = np.mean(policy_loss), np.mean(value_loss)
+            r = rewards.view(-1, rewards.size(-1)).mean(0).cpu().tolist()
             print("Epoch: {}, Loss: {:.4f}/{:.4f}, Reward: {}, Lifetime: {:.4f} -- {:.4f}s".format(
-                epoch, policy_loss, value_loss, "/".join(list(map("{:.4f}".format, rewards))), lifetime, time.time()-tic
+                epoch, policy_loss, value_loss, "/".join(list(map("{:.4f}".format, r))), lifetime, time.time()-tic
             ))
             if logger is not None:
                 logger.add_scalar("train/lifetime", lifetime, epoch)
