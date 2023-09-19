@@ -5,12 +5,12 @@ This is the official implementation for
 - _*Composite Motion Learning with Task Control*_
 [[arXiv](https://arxiv.org/abs/2305.03286)]
 [[Youtube](https://youtu.be/mcRAxwoTh3E)]
-(SIGGRAPH'23, [TOG](https://dl.acm.org/doi/abs/10.1145/3592447))
+([SIGGRAPH'23](https://s2023.siggraph.org/presentation/?id=papers_763&sess=sess118), [TOG](https://dl.acm.org/doi/abs/10.1145/3592447))
 
 - _*A GAN-Like Approach for Physics-Based Imitation Learning and Interactive Character Control*_
 [[arXiv](https://arxiv.org/abs/2105.10066)]
 [[Youtube](https://www.youtube.com/watch?v=VHMyvDD3B_o)]
-(SCA'21, [PACMCGIT](https://dl.acm.org/doi/abs/10.1145/3480148))
+([SCA'21](https://www.youtube.com/watch?v=vPzpCarkm74), [PACMCGIT](https://dl.acm.org/doi/abs/10.1145/3480148))
 
 
 ![](doc/teaser_tennis.png)
