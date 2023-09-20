@@ -259,12 +259,6 @@ def train(env, model, ckpt_dir, training_params):
                     returns = model.value_normalizer(returns)
                 if multi_critics:
                     advantages = advantages.mul_(reward_weights)
-                    # for logger only
-                    rewards = rewards.view(*reward_weights.shape)
-                    reward_tot = (rewards * reward_weights).sum(-1, keepdims=True).mean(0).item()
-                    rewards = rewards.mean(0).cpu().tolist()
-                    if rewards_task is not None:
-                        rewards_task = rewards_task.mean(0).cpu().tolist()
 
             n_samples = advantages.size(0)
             epoch += 1
@@ -304,13 +298,20 @@ def train(env, model, ckpt_dir, training_params):
 
             lifetime = env.lifetime.to(torch.float32).mean().item()
             policy_loss, value_loss = np.mean(policy_loss), np.mean(value_loss)
-            r = rewards.view(-1, rewards.size(-1)).mean(0).cpu().tolist()
+            if multi_critics:
+                rewards = rewards.view(*reward_weights.shape)
+                r = rewards.mean(0).cpu().tolist()
+                # reward_tot = (rewards * reward_weights).sum(-1, keepdims=True).mean(0).item()
+            else:
+                r = rewards.view(-1, rewards.size(-1)).mean(0).cpu().tolist()
+            if rewards_task is not None:
+                rewards_task = rewards_task.mean(0).cpu().tolist()
             print("Epoch: {}, Loss: {:.4f}/{:.4f}, Reward: {}, Lifetime: {:.4f} -- {:.4f}s".format(
                 epoch, policy_loss, value_loss, "/".join(list(map("{:.4f}".format, r))), lifetime, time.time()-tic
             ))
             if logger is not None:
                 logger.add_scalar("train/lifetime", lifetime, epoch)
-                logger.add_scalar("train/reward", reward_tot, epoch)
+                logger.add_scalar("train/reward", np.mean(r), epoch)
                 logger.add_scalar("train/loss_policy", policy_loss, epoch)
                 logger.add_scalar("train/loss_value", value_loss, epoch)
                 for name, r_loss in real_losses.items():
