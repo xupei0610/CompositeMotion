@@ -279,6 +279,8 @@ class Env(object):
         for i in range(self.gym.get_actor_count(self.envs[0])):
             actor = self.gym.get_actor_handle(self.envs[0], i)
             dof_prop = self.gym.get_actor_dof_properties(self.envs[0], actor)
+            # FIXME actuated dof setting only supports the primary actor
+            if len(dof_prop) < 1: continue
             if self.control_mode == "torque":
                 action_lower.extend([-dof_prop["effort"][j] for j in self.actuated_dof])
                 action_upper.extend([dof_prop["effort"][j] for j in self.actuated_dof])

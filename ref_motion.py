@@ -219,10 +219,12 @@ class ReferenceMotion():
                 motion = compute_motion(fps, skeleton, r, t)
             else:
                 # FIXME
-                with open(motion_file, "rb") as f:
-                    motion = pickle.load(f)
+                with open(motion_file, "rb") as _:
+                    motion = pickle.load(_)
+                n_frames = len(motion.pos)
+                fps = motion.fps
             
-            dt = 1.0 / motion.fps
+            dt = 1.0 / fps
             motion_len = dt * (n_frames - 1)
 
             print("\t{:.4f}s, {:d} Hz, {:d} frames".format(motion_len, fps, n_frames))
