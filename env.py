@@ -33,11 +33,13 @@ DiscriminatorProperty = namedtuple("DiscriminatorProperty",
 class Env(object):
     UP_AXIS = 2
     CHARACTER_MODEL = None
+    CAMERA_POS= 0, -4.5, 2.0
 
     def __init__(self,
-        n_envs: int, fps: int, frameskip: int,
+        n_envs: int, fps: int=30, frameskip: int=2,
         episode_length: Optional[Callable or int] = 300,
         control_mode: str = "position",
+        substeps: int = 2,
         compute_device: int = 0,
         graphics_device: Optional[int] = None,
         character_model: Optional[str] = None,
@@ -48,9 +50,11 @@ class Env(object):
         self.frameskip = frameskip
         self.fps = fps
         self.step_time = 1./self.fps
+        self.substeps = substeps
         self.control_mode = control_mode
         self.episode_length = episode_length
         self.device = torch.device(compute_device)
+        self.camera_pos = self.CAMERA_POS
         if graphics_device is None:
             graphics_device = compute_device
         self.character_model = self.CHARACTER_MODEL if character_model is None else character_model
@@ -94,9 +98,9 @@ class Env(object):
 
         for i in range(self.gym.get_actor_count(self.envs[0])):
             rigid_body = self.gym.get_actor_rigid_body_dict(self.envs[0], i)
-            print(rigid_body, len(rigid_body))
+            print("Links", sorted(rigid_body.items(), key=lambda x:x[1]), len(rigid_body))
             dof = self.gym.get_actor_dof_dict(self.envs[0], i)
-            print(dof, len(dof))
+            print("Joints", sorted(dof.items(), key=lambda x:x[1]), len(dof))
 
     def __del__(self):
         if hasattr(self, "viewer") and self.viewer is not None:
@@ -114,7 +118,7 @@ class Env(object):
         sim_params = gymapi.SimParams()
         sim_params.use_gpu_pipeline = True # force to enable GPU
         sim_params.dt = self.step_time/self.frameskip
-        sim_params.substeps = 2
+        sim_params.substeps = self.substeps
         sim_params.up_axis = gymapi.UP_AXIS_Z if self.UP_AXIS == 2 else gymapi.UP_AXIS_Y
         sim_params.gravity = gymapi.Vec3(*self.vector_up(-9.81))
         sim_params.num_client_threads = 0
@@ -147,7 +151,7 @@ class Env(object):
     def add_actor(self, env, i):
         pass
 
-    def create_envs(self, n: int):
+    def create_envs(self, n: int, fix_base_link=False, disable_gravity=False, actuate_all_dofs=True):
         if self.control_mode == "position":
             control_mode = gymapi.DOF_MODE_POS
         elif self.control_mode == "torque":
@@ -158,27 +162,48 @@ class Env(object):
         envs, actors = [], []
         env_spacing = 3
         asset_options = gymapi.AssetOptions()
-        # asset_options.fix_base_link = True
+        
+        asset_options.fix_base_link = fix_base_link
+        # asset_options.vhacd_enabled = True
+        asset_options.disable_gravity = disable_gravity
+
         asset_options.angular_damping = 0.01
         asset_options.max_angular_velocity = 100.0
         asset_options.default_dof_drive_mode = int(gymapi.DOF_MODE_NONE)
         actor_asset = self.gym.load_asset(self.sim, os.path.abspath(os.path.dirname(self.character_model)), os.path.basename(self.character_model), asset_options)
+
         spacing_lower = gymapi.Vec3(-env_spacing, -env_spacing, 0)
         spacing_upper = gymapi.Vec3(env_spacing, env_spacing, env_spacing)
         n_envs_per_row = int(n**0.5)
         start_pose = gymapi.Transform()
         start_pose.p = gymapi.Vec3(*self.vector_up(0.89))
         start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
+
+        if actuate_all_dofs:
+            self.actuated_dof = [i for i in range(self.gym.get_asset_dof_count(actor_asset))]
+        else:
+            actuators = []
+            for i in range(self.gym.get_asset_actuator_count(actor_asset)):
+                name = self.gym.get_asset_actuator_joint_name(actor_asset, i)
+                actuators.append(self.gym.find_asset_dof_index(actor_asset, name))
+                if actuators[-1] == -1:
+                    raise ValueError("Failed to find joint with name {}".format(name))
+            self.actuated_dof = sorted(actuators) if len(actuators) else None
+
         for i in range(n):
             env = self.gym.create_env(self.sim, spacing_lower, spacing_upper, n_envs_per_row)
             actor = self.gym.create_actor(env, actor_asset, start_pose, "actor", i, -1, 0)
             self.add_actor(env, i)
             envs.append(env)
             actors.append(actor)
-            # enable PD control
-            # Kp (stiffness) and Kd (damping) are defined inside the mjcf xml file
+            
             dof_prop = self.gym.get_asset_dof_properties(actor_asset)
-            dof_prop["driveMode"].fill(control_mode)
+            for k in range(len(dof_prop)):
+                if k in self.actuated_dof:
+                    dof_prop[k]["driveMode"] = control_mode
+                else:
+                    dof_prop[k]["stiffness"] = 0
+                    dof_prop[k]["damping"] = 0
             self.gym.set_actor_dof_properties(env, actor, dof_prop)
         return envs, actors
 
@@ -186,7 +211,8 @@ class Env(object):
         tar_env = len(self.envs)//4 + int(len(self.envs)**0.5)//2
         self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
         base_pos = self.root_pos[tar_env].cpu()
-        cam_pos = gymapi.Vec3(*self.vector_up(2.0, [base_pos[0], base_pos[1]-4.5, base_pos[2]-4.5]))
+        cam_pos = gymapi.Vec3(*self.vector_up(self.camera_pos[2], 
+            [base_pos[0]+self.camera_pos[0], base_pos[1]+self.camera_pos[1], base_pos[2]+self.camera_pos[1]]))
         self.gym.viewer_camera_look_at(self.viewer, self.envs[tar_env], cam_pos, self.cam_target)
         self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_ESCAPE, "QUIT")
         self.gym.subscribe_viewer_keyboard_event(self.viewer, gymapi.KEY_F, "TOGGLE_CAMERA_FOLLOWING")
@@ -242,29 +268,36 @@ class Env(object):
         contact_force_tensor = gymtorch.wrap_tensor(contact_force_tensor)
         self.contact_force_tensor = contact_force_tensor.view(len(self.envs), -1, 3)
 
+        if len(self.actuated_dof) == self.joint_tensor.size(1):
+            self.action_tensor = None
+        else:
+            self.action_tensor = torch.zeros_like(self.joint_tensor[..., 0])
+
     def setup_action_normalizer(self):
         action_lower, action_upper = [], []
         action_scale = []
         for i in range(self.gym.get_actor_count(self.envs[0])):
             actor = self.gym.get_actor_handle(self.envs[0], i)
-            n_dof = self.gym.get_actor_dof_count(self.envs[0], actor)
-            if n_dof < 1: continue
             dof_prop = self.gym.get_actor_dof_properties(self.envs[0], actor)
-            if self.control_mode == "position":
-                action_lower.extend([min(dof_prop["lower"][j], dof_prop["upper"][j]) for j in range(n_dof)])
-                action_upper.extend([max(dof_prop["lower"][j], dof_prop["upper"][j]) for j in range(n_dof)])
-                action_scale.append(2)
-            elif self.control_mode == "torque":
-                action_lower.extend([-dof_prop["effort"][j] for j in range(n_dof)])
-                action_upper.extend([dof_prop["effort"][j] for j in range(n_dof)])
+            if self.control_mode == "torque":
+                action_lower.extend([-dof_prop["effort"][j] for j in self.actuated_dof])
+                action_upper.extend([dof_prop["effort"][j] for j in self.actuated_dof])
                 action_scale.append(1)
+            else: # self.control_mode == "position":
+                action_lower.extend([min(dof_prop["lower"][j], dof_prop["upper"][j]) for j in self.actuated_dof])
+                action_upper.extend([max(dof_prop["lower"][j], dof_prop["upper"][j]) for j in self.actuated_dof])
+                action_scale.append(2)
         action_offset = 0.5 * np.add(action_upper, action_lower)
         action_scale *= 0.5 * np.subtract(action_upper, action_lower)
         self.action_offset = torch.tensor(action_offset, dtype=torch.float32, device=self.device)
         self.action_scale = torch.tensor(action_scale, dtype=torch.float32, device=self.device)
 
     def process_actions(self, actions):
-        return actions*self.action_scale + self.action_offset
+        a = actions*self.action_scale + self.action_offset
+        if self.action_tensor is None:
+            return a
+        self.action_tensor[:, self.actuated_dof] = a
+        return self.action_tensor
 
     def reset(self):
         self.lifetime.zero_()
@@ -345,12 +378,15 @@ class Env(object):
 
     def apply_actions(self, actions):
         actions = self.process_actions(actions)
-        actions = gymtorch.unwrap_tensor(actions)
         if self.control_mode == "position":
+            actions = gymtorch.unwrap_tensor(actions)
             self.gym.set_dof_position_target_tensor(self.sim, actions)
         elif self.control_mode == "torque":
+            actions = gymtorch.unwrap_tensor(actions)
             self.gym.set_dof_actuation_force_tensor(self.sim, actions)
         else:
+            actions = torch.stack((actions, torch.zeros_like(actions)), -1)
+            actions = gymtorch.unwrap_tensor(actions)
             self.gym.set_dof_state_tensor(self.sim, actions)
 
     def init_state(self, env_ids):
@@ -416,7 +452,9 @@ class ICCGANHumanoid(Env):
         controllable_links = [self.gym.find_actor_rigid_body_handle(self.envs[0], self.actors[0], link)
             for link in controllable_links]
 
-        if contactable_links:
+        if contactable_links is None:
+            self.contactable_links = None
+        elif contactable_links:
             contact = np.zeros((n_envs, n_links), dtype=bool)
             for link in contactable_links:
                 lid = self.gym.find_actor_rigid_body_handle(self.envs[0], self.actors[0], link)
@@ -424,7 +462,7 @@ class ICCGANHumanoid(Env):
                 contact[:, lid] = True
             self.contactable_links = torch.tensor(contact).to(self.contact_force_tensor.device)
         else:
-            self.contactable_links = None
+            self.contactable_links = False
 
         init_pose = motion_file
         self.ref_motion = ReferenceMotion(motion_file=init_pose, character_model=self.character_model,
@@ -563,7 +601,8 @@ class ICCGANHumanoid(Env):
         if self.contactable_links is None:
             return torch.zeros_like(self.done)
         masked_contact = self.char_contact_force_tensor.clone()
-        masked_contact[self.contactable_links] = 0          # N x n_links x 3
+        if self.contactable_links is not False:
+            masked_contact[self.contactable_links] = 0          # N x n_links x 3
 
         contacted = torch.any(masked_contact > 1., dim=-1)  # N x n_links
         too_low = self.link_pos[..., self.UP_AXIS] < 0.15    # N x n_links

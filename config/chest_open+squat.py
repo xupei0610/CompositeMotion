@@ -3,7 +3,7 @@ import numpy as np
 env_cls = "ICCGANHumanoid"
 env_params = dict(
     episode_length = 300,
-    motion_file = "assets/motions_npy/gym/squat.npy"
+    motion_file = "assets/motions_binary/gym/squat.pkl"
 )
 
 training_params = dict(

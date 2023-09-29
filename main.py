@@ -352,7 +352,7 @@ if __name__ == "__main__":
             with open(os.path.join(settings.ckpt, "command_{}.txt".format(time.time())), "w") as f:
                 f.write(" ".join(sys.argv))
 
-    if os.path.splitext(settings.config)[-1] in [".npy", ".json", ".yaml"]:
+    if os.path.splitext(settings.config)[-1] in [".pkl", ".json", ".yaml"]:
         config = object()
         config.env_params = dict(
             motion_file = settings.config
