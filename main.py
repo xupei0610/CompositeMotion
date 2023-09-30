@@ -36,23 +36,20 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 torch.use_deterministic_algorithms(True)
 
-
-FPS = 30
-FRAMESKIP = 2
-CONTROL_MODE = "position"
-HORIZON = 8
-NUM_ENVS = 512
-BATCH_SIZE = 256 #HORIZON*NUM_ENVS//16
-OPT_EPOCHS = 5
-ACTOR_LR = 5e-6
-CRITIC_LR = 1e-4
-GAMMA = 0.95
-GAMMA_LAMBDA = GAMMA * 0.95
-
 TRAINING_PARAMS = dict(
+    horizon = 8,
+    num_envs = 512,
+    batch_size = 256,
+    opt_epochs = 5,
+    actor_lr = 5e-6,
+    critic_lr = 1e-4,
+    gamma = 0.95,
+    lambda_ = 0.95,
+    disc_lr = 1e-5,
     max_epochs = 10000,
     save_interval = None,
-    terminate_reward = -1
+    terminate_reward = -1,
+    control_mode="position"
 )
 
 def test(env, model):
@@ -72,11 +69,11 @@ def train(env, model, ckpt_dir, training_params):
         logger = None
 
     optimizer = torch.optim.Adam([
-        {"params": model.actor.parameters(), "lr": ACTOR_LR},
-        {"params": model.critic.parameters(), "lr": CRITIC_LR}
+        {"params": model.actor.parameters(), "lr": training_params.actor_lr},
+        {"params": model.critic.parameters(), "lr": training_params.critic_lr}
     ])
     ac_parameters = list(model.actor.parameters()) + list(model.critic.parameters())
-    disc_optimizer = {name: torch.optim.Adam(disc.parameters(), 1e-5) for name, disc in model.discriminators.items()}
+    disc_optimizer = {name: torch.optim.Adam(disc.parameters(), training_params.disc_lr) for name, disc in model.discriminators.items()}
 
     buffer = dict(
         s=[], a=[], v=[], lp=[], v_=[], not_done=[], terminate=[],
@@ -94,6 +91,13 @@ def train(env, model, ckpt_dir, training_params):
     }
     real_losses, fake_losses = {n:[] for n in buffer_disc.keys()}, {n:[] for n in buffer_disc.keys()}
     
+
+    BATCH_SIZE = training_params.batch_size
+    HORIZON = training_params.horizon
+    GAMMA = training_params.gamma
+    GAMMA_LAMBDA = training_params.gamma * training_params.lambda_
+    OPT_EPOCHS = training_params.opt_epochs
+
     epoch = 0
     model.eval()
     env.reset()
@@ -339,19 +343,6 @@ def train(env, model, ckpt_dir, training_params):
             tic = time.time()
 
 if __name__ == "__main__":
-    if settings.test:
-        num_envs = 1
-    else:
-        num_envs = NUM_ENVS
-        if settings.ckpt:
-            if os.path.isfile(settings.ckpt) or os.path.exists(os.path.join(settings.ckpt, "ckpt")):
-                raise ValueError("Checkpoint folder {} exists. Add `--test` option to run test with an existing checkpoint file".format(settings.ckpt))
-            import shutil, sys
-            os.makedirs(settings.ckpt, exist_ok=True)
-            shutil.copy(settings.config, settings.ckpt)
-            with open(os.path.join(settings.ckpt, "command_{}.txt".format(time.time())), "w") as f:
-                f.write(" ".join(sys.argv))
-
     if os.path.splitext(settings.config)[-1] in [".pkl", ".json", ".yaml"]:
         config = object()
         config.env_params = dict(
@@ -381,8 +372,20 @@ if __name__ == "__main__":
         env_cls = env.ICCGANHumanoid
     print(env_cls, config.env_params)
 
-    env = env_cls(num_envs, FPS, FRAMESKIP,
-        control_mode=CONTROL_MODE,
+    if settings.test:
+        num_envs = 1
+    else:
+        num_envs = training_params.num_envs
+        if settings.ckpt:
+            if os.path.isfile(settings.ckpt) or os.path.exists(os.path.join(settings.ckpt, "ckpt")):
+                raise ValueError("Checkpoint folder {} exists. Add `--test` option to run test with an existing checkpoint file".format(settings.ckpt))
+            import shutil, sys
+            os.makedirs(settings.ckpt, exist_ok=True)
+            shutil.copy(settings.config, settings.ckpt)
+            with open(os.path.join(settings.ckpt, "command_{}.txt".format(time.time())), "w") as f:
+                f.write(" ".join(sys.argv))
+
+    env = env_cls(num_envs,
         discriminators=discriminators,
         compute_device=settings.device, 
         **config.env_params

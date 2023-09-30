@@ -1,12 +1,11 @@
 from typing import Sequence
 import os
-import yaml
-import json
 import torch
 import numpy as np
+import yaml
+import json
 import pickle
 from collections import namedtuple
-from types import SimpleNamespace
 import scipy.ndimage.filters as filters
 
 from utils import quat2expmap,  quatconj, quatmultiply, slerp, quat2expmap, rotatepoint
@@ -14,6 +13,9 @@ from utils import quat2expmap,  quatconj, quatmultiply, slerp, quat2expmap, rota
 
 Skeleton = namedtuple("Skeleton",
     "nodes parents trans rot"
+)
+Motion = namedtuple("Motion",
+    "fps pos orient ang_vel lin_vel local_q local_p local_vel"
 )
 
 import xml.etree.ElementTree as XMLParser
@@ -62,13 +64,13 @@ def compute_motion(fps:int, skeleton: Skeleton, local_q, local_p):
     for nid in range(len(skeleton.nodes)):
         pid = skeleton.parents[nid]
         if pid == -1:
-            orient.append(local_q[:, nid])
-            pos.append(local_p[:, nid])
+            orient.append(quatmultiply(skeleton.rot[nid], local_q[:, nid]))
+            pos.append(rotatepoint(skeleton.rot[nid].unsqueeze(0), local_p[:, nid]))
             root = nid
         else:
-            q = quatmultiply(orient[pid], skeleton.rot[pid])
+            q = quatmultiply(orient[pid], skeleton.rot[nid])
             orient.append(quatmultiply(q, local_q[:, nid]))
-            pos.append(pos[pid] + rotatepoint(q, skeleton.trans[nid].unsqueeze(0)))
+            pos.append(pos[pid] + rotatepoint(orient[pid], local_p[:, nid]+skeleton.trans[nid].unsqueeze(0)))
 
     orient = torch.stack(orient, 1) # N_frames x N_links x 4
     pos = torch.stack(pos, 1)       # N_frames x N_links x 3
@@ -101,7 +103,7 @@ def compute_motion(fps:int, skeleton: Skeleton, local_q, local_p):
     local_vel = local_ang_vel + local_lin_vel
     local_vel = torch.cat((local_vel, local_vel[-1:]))
 
-    return SimpleNamespace(
+    return Motion(
         fps=fps,
         pos=pos.to(torch.float),
         orient=orient.to(torch.float),
@@ -317,10 +319,8 @@ class ReferenceMotion():
 
             root_pos0[ids]  = motion.pos[fid0_, 0]
             root_pos1[ids]  = motion.pos[fid1_, 0]
-
             root_orient0[ids] = motion.orient[fid0_, 0]
             root_orient1[ids]  = motion.orient[fid1_, 0]
-
             root_lin_vel[ids] = motion.lin_vel[fid0_, 0]
             root_ang_vel[ids] = motion.ang_vel[fid0_, 0]
             
@@ -353,10 +353,9 @@ class ReferenceMotion():
         joint_q1 = joint_q1.to(device)
         joint_p0 = joint_p0.to(device)
         joint_p1 = joint_p1.to(device)
+        joint_vel = joint_vel.to(device)
         link_pos0 = link_pos0.to(device)
         link_pos1 = link_pos1.to(device)
-        joint_vel = joint_vel.to(device)
-
         link_orient0 = link_orient0.to(device)
         link_orient1 = link_orient1.to(device)
         link_lin_vel = link_lin_vel.to(device)
@@ -374,5 +373,4 @@ class ReferenceMotion():
         root_tensor = torch.cat((root_pos, root_orient, root_lin_vel, root_ang_vel), -1)
         link_tensor = torch.cat((link_pos, link_orient, link_lin_vel, link_ang_vel), -1)
         joint_tensor = torch.stack((joint_pos, joint_vel), -1)
-
         return root_tensor, link_tensor, joint_tensor
