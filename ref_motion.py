@@ -38,7 +38,7 @@ def load_mjcf(filename: str):
         # NOTE for body rotation offset, only the quat attribute defined dierctly in the body element is supported
         q = node.attrib.get("quat")
         if q is None:
-            q = [0, 0, 0, 1]
+            q = [0., 0., 0., 1.]
         else:
             q = list(map(float, q.split()))
             q = np.array([q[1], q[2], q[3], q[0]])
@@ -54,8 +54,8 @@ def load_mjcf(filename: str):
     return Skeleton(
         nodes = nodes,
         parents = parents,
-        trans = torch.from_numpy(np.array(t)),
-        rot = torch.from_numpy(np.array(r))
+        trans = torch.from_numpy(np.array(t, dtype=float)),
+        rot = torch.from_numpy(np.array(r, dtype=float))
     )
 
 def compute_motion(fps:int, skeleton: Skeleton, local_q, local_p):
@@ -206,14 +206,14 @@ class ReferenceMotion():
                                     p, q = q, p
                             elif len(q) == 3:
                                 # translation
-                                p, q = q, [0,0,0,1]
+                                p, q = q, [0.,0.,0.,1.]
                             elif len(q) == 4:
-                                p = [0,0,0]
+                                p = [0.,0.,0.]
                             else:
                                 assert len(frame[joint]) in [2,3,4]
                         else:
-                            q = [0,0,0,1]
-                            p = [0,0,0]
+                            q = [0.,0.,0.,1.]
+                            p = [0.,0.,0.]
                         r[-1].append(q)
                         t[-1].append(p)
                 r = torch.from_numpy(np.array(r))
