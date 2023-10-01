@@ -15,7 +15,6 @@ discriminators = {
         motion_file = "assets/motions/gym/chest_open+walk_in_place.json",
         key_links = ["torso", "head", "right_upper_arm", "right_lower_arm", "right_hand", "left_upper_arm", "left_lower_arm", "left_hand"],
         parent_link = "pelvis",
-        local_pos = True,
         weight=0.2
     ),
     "front_jumping_jack/lower": dict(

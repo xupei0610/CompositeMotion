@@ -17,7 +17,6 @@ discriminators = {
         motion_file = "assets/motions_binary/gym/waist_twist.pkl",
         key_links = ["torso", "head", "right_upper_arm", "right_lower_arm", "right_hand", "left_upper_arm", "left_lower_arm", "left_hand"],
         parent_link = "pelvis",
-        local_pos = True,
         replay_speed = lambda n: np.random.uniform(0.8, 1.2, size=(n,))
     ),
     "leg_lunge/lower": dict(

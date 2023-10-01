@@ -12,21 +12,19 @@ def parse_kwarg(kwargs: dict, key: str, default_val: Any):
 class DiscriminatorConfig(object):
     def __init__(self,
         key_links: Optional[List[str]]=None, ob_horizon: Optional[int]=None, 
-        parent_link: Optional[str]=None, local_pos: bool=False, local_height: bool=True,
+        parent_link: Optional[str]=None,
         replay_speed: Optional[Callable]=None, motion_file: Optional[str]=None,
         weight:Optional[float]=None
     ):
         self.motion_file = motion_file
         self.key_links = key_links
         self.parent_link = parent_link
-        self.local_pos = local_pos
-        self.local_height = local_height
         self.replay_speed = replay_speed
         self.ob_horizon = ob_horizon
         self.weight = weight
 
 DiscriminatorProperty = namedtuple("DiscriminatorProperty",
-    "name key_links parent_link local_pos local_height replay_speed ob_horizon id"
+    "name key_links parent_link replay_speed ob_horizon id"
 )
 
 
@@ -114,31 +112,33 @@ class Env(object):
         base_vector[self.UP_AXIS] = val
         return base_vector
     
-    def setup_sim_params(self):
-        sim_params = gymapi.SimParams()
-        sim_params.use_gpu_pipeline = True # force to enable GPU
-        sim_params.dt = self.step_time/self.frameskip
-        sim_params.substeps = self.substeps
-        sim_params.up_axis = gymapi.UP_AXIS_Z if self.UP_AXIS == 2 else gymapi.UP_AXIS_Y
-        sim_params.gravity = gymapi.Vec3(*self.vector_up(-9.81))
-        sim_params.num_client_threads = 0
-        sim_params.physx.num_threads = 4
-        sim_params.physx.solver_type = 1
-        sim_params.physx.num_subscenes = 4  # works only for CPU 
-        sim_params.physx.num_position_iterations = 4
-        sim_params.physx.num_velocity_iterations = 0
-        sim_params.physx.contact_offset = 0.01
-        sim_params.physx.rest_offset = 0.0
-        sim_params.physx.bounce_threshold_velocity = 0.2
-        sim_params.physx.max_depenetration_velocity = 10.0
-        sim_params.physx.default_buffer_size_multiplier = 5.0
-        sim_params.physx.max_gpu_contact_pairs = 8*1024*1024
+    def setup_sim_params(self, physx_params=dict()):
+        p = gymapi.SimParams()
+        p.dt = self.step_time/self.frameskip
+        p.substeps = self.substeps
+        p.up_axis = gymapi.UP_AXIS_Z if self.UP_AXIS == 2 else gymapi.UP_AXIS_Y
+        p.gravity = gymapi.Vec3(*self.vector_up(-9.81))
+        p.num_client_threads = 0
+        p.physx.num_threads = 4
+        p.physx.solver_type = 1
+        p.physx.num_subscenes = 4  # works only for CPU 
+        p.physx.num_position_iterations = 4
+        p.physx.num_velocity_iterations = 0
+        p.physx.contact_offset = 0.01
+        p.physx.rest_offset = 0.0
+        p.physx.bounce_threshold_velocity = 0.2
+        p.physx.max_depenetration_velocity = 10.0
+        p.physx.default_buffer_size_multiplier = 5.0
+        p.physx.max_gpu_contact_pairs = 8*1024*1024
         # FIXME IsaacGym Pr4 will provide unreliable results when collecting from all substeps
-        sim_params.physx.contact_collection = \
+        p.physx.contact_collection = \
             gymapi.ContactCollection(gymapi.ContactCollection.CC_LAST_SUBSTEP) 
         #gymapi.ContactCollection(gymapi.ContactCollection.CC_ALL_SUBSTEPS)
-        sim_params.physx.use_gpu = True
-        return sim_params
+        for k, v in physx_params.items():
+            setattr(p.physx, k, v)
+        p.use_gpu_pipeline = True # force to enable GPU
+        p.physx.use_gpu = True
+        return p
 
     def add_ground(self):
         plane_params = gymapi.PlaneParams()
@@ -151,7 +151,7 @@ class Env(object):
     def add_actor(self, env, i):
         pass
 
-    def create_envs(self, n: int, fix_base_link=False, disable_gravity=False, actuate_all_dofs=True):
+    def create_envs(self, n: int, actuate_all_dofs=True, asset_options=dict()):
         if self.control_mode == "position":
             control_mode = gymapi.DOF_MODE_POS
         elif self.control_mode == "torque":
@@ -161,16 +161,17 @@ class Env(object):
 
         envs, actors = [], []
         env_spacing = 3
-        asset_options = gymapi.AssetOptions()
+        asset_opt = gymapi.AssetOptions()
         
-        asset_options.fix_base_link = fix_base_link
-        # asset_options.vhacd_enabled = True
-        asset_options.disable_gravity = disable_gravity
-
-        asset_options.angular_damping = 0.01
-        asset_options.max_angular_velocity = 100.0
-        asset_options.default_dof_drive_mode = int(gymapi.DOF_MODE_NONE)
-        actor_asset = self.gym.load_asset(self.sim, os.path.abspath(os.path.dirname(self.character_model)), os.path.basename(self.character_model), asset_options)
+        asset_opt.angular_damping = 0.01
+        asset_opt.max_angular_velocity = 100.0
+        asset_opt.default_dof_drive_mode = int(gymapi.DOF_MODE_NONE)
+        for k, v in asset_options.items():
+            setattr(asset_opt, k, v)
+        actor_asset = self.gym.load_asset(self.sim,
+            os.path.abspath(os.path.dirname(self.character_model)),
+            os.path.basename(self.character_model),
+            asset_opt)
 
         spacing_lower = gymapi.Vec3(-env_spacing, -env_spacing, 0)
         spacing_upper = gymapi.Vec3(env_spacing, env_spacing, env_spacing)
@@ -433,6 +434,9 @@ class ICCGANHumanoid(Env):
     GOAL_TENSOR_DIM = None
 
     OB_HORIZON = 4
+    KEY_LINKS = None    # All links
+    PARENT_LINK = None  # root link
+
 
     def __init__(self, *args,
         motion_file: str,
@@ -445,8 +449,14 @@ class ICCGANHumanoid(Env):
         self.enable_goal_timer = parse_kwarg(kwargs, "enable_goal_timer", self.ENABLE_GOAL_TIMER)
         self.goal_tensor_dim = parse_kwarg(kwargs, "goal_tensor_dim", self.GOAL_TENSOR_DIM)
         self.ob_horizon = parse_kwarg(kwargs, "ob_horizon", self.OB_HORIZON)
+        key_links = parse_kwarg(kwargs, "key_links", self.KEY_LINKS)
+        self.parent_link = parse_kwarg(kwargs, "parent_link", self.PARENT_LINK)
         super().__init__(*args, **kwargs)
 
+        self.key_links = None if key_links is None else sorted([
+            self.gym.find_actor_rigid_body_handle(self.envs[0], self.actors[0], link) for link in key_links
+        ])
+        
         n_envs = len(self.envs)
         n_links = self.char_link_tensor.size(1)
         n_dofs = self.char_joint_tensor.size(1)
@@ -531,8 +541,6 @@ class ICCGANHumanoid(Env):
                 name = id,
                 key_links = key_links,
                 parent_link = parent_link,
-                local_pos = config.local_pos,
-                local_height = config.local_height,
                 replay_speed = config.replay_speed,
                 ob_horizon = config.ob_horizon,
                 id=i
@@ -640,9 +648,8 @@ class ICCGANHumanoid(Env):
             self.char_joint_tensor = self.joint_tensor
         
         self.char_contact_force_tensor = self.contact_force_tensor[:, :n_links]
-
-        ob_disc_dim = 13 + n_links*13
-        self.state_hist = torch.empty((self.ob_horizon+1, len(self.envs), ob_disc_dim),
+    
+        self.state_hist = torch.empty((self.ob_horizon+1, len(self.envs), 13 + n_links*13),
             dtype=self.root_tensor.dtype, device=self.device)
 
         if self.goal_tensor_dim:
@@ -675,12 +682,12 @@ class ICCGANHumanoid(Env):
     def _observe(self, env_ids):
         if env_ids is None:
             return observe_iccgan(
-                self.state_hist[-self.ob_horizon:], self.ob_seq_lens
-            )
+                self.state_hist[-self.ob_horizon:], self.ob_seq_lens, self.key_links, self.parent_link
+            ).flatten(start_dim=1)
         else:
             return observe_iccgan(
-                self.state_hist[-self.ob_horizon:][:, env_ids], self.ob_seq_lens[env_ids]
-            )
+                self.state_hist[-self.ob_horizon:][:, env_ids], self.ob_seq_lens[env_ids], self.key_links, self.parent_link
+            ).flatten(start_dim=1)
     
     def observe_disc(self, state):
         seq_len = self.info["ob_seq_lens"]+1
@@ -688,14 +695,14 @@ class ICCGANHumanoid(Env):
         if torch.is_tensor(state):
             # fake
             for id, disc in self.discriminators.items():
-                res[id] = observe_disc(state[-disc.ob_horizon:], seq_len, disc.key_links, disc.parent_link, disc.local_pos, disc.local_height)
+                res[id] = observe_iccgan(state[-disc.ob_horizon:], seq_len, disc.key_links, disc.parent_link, include_velocity=False)
             return res
         else:
             # real
             seq_len_ = dict()
             for disc_name, s in state.items():
                 disc = self.discriminators[disc_name]
-                res[disc_name] = observe_disc(s[-disc.ob_horizon:], seq_len, disc.key_links, disc.parent_link, disc.local_pos, disc.local_height)
+                res[disc_name] = observe_iccgan(s[-disc.ob_horizon:], seq_len, disc.key_links, disc.parent_link, include_velocity=False)
                 seq_len_[disc_name] = seq_len
             return res, seq_len_
 
@@ -720,56 +727,11 @@ class ICCGANHumanoid(Env):
 
 
 @torch.jit.script
-def observe_iccgan(state_hist: torch.Tensor, seq_len: torch.Tensor):
-    # state_hist: L x N x D
-
-    UP_AXIS = 2
-    n_hist = state_hist.size(0)
-    n_inst = state_hist.size(1)
-
-    root_tensor = state_hist[..., :13]
-    link_tensor = state_hist[...,13:].view(state_hist.size(0), state_hist.size(1), -1, 13)
-
-    root_pos, root_orient = root_tensor[..., :3], root_tensor[..., 3:7]
-    link_pos, link_orient = link_tensor[..., :3], link_tensor[..., 3:7]
-    link_lin_vel, link_ang_vel = link_tensor[..., 7:10], link_tensor[..., 10:13]
-
-    origin = root_pos[-1].clone()
-    origin[..., UP_AXIS] = 0                                            # N x 3
-    heading = heading_zup(root_orient[-1])
-    up_dir = torch.zeros_like(origin)
-    up_dir[..., UP_AXIS] = 1
-    heading_orient_inv = axang2quat(up_dir, -heading)                   # N x 4
-
-    heading_orient_inv = (heading_orient_inv                            # L x N x n_links x 4
-        .view(1, -1, 1, 4).repeat(n_hist, 1, link_pos.size(-2), 1))
-    origin = origin.unsqueeze_(-2)                                      # N x 1 x 3
-
-    ob_link_pos = link_pos - origin                                     # L x N x n_links x 3 
-    ob_link_pos = rotatepoint(heading_orient_inv, ob_link_pos)
-    ob_link_orient = quatmultiply(heading_orient_inv, link_orient)      # L x N x n_links x 4
-    ob_link_lin_vel = rotatepoint(heading_orient_inv, link_lin_vel)     # N x n_links x 3
-    ob_link_ang_vel = rotatepoint(heading_orient_inv, link_ang_vel)     # N x n_links x 3
-
-    ob = torch.cat((ob_link_pos, ob_link_orient,
-        ob_link_lin_vel, ob_link_ang_vel), -1)                          # L x N x n_links x 13
-    ob = ob.view(n_hist, n_inst, -1)                                    # L x N x (n_links x 13)
-
-    ob1 = ob.permute(1, 0, 2)                                           # N x L x (n_links x 13)
-    ob2 = torch.zeros_like(ob1)
-    arange = torch.arange(n_hist, dtype=seq_len.dtype, device=seq_len.device).unsqueeze_(0)
-    seq_len_ = seq_len.unsqueeze(1)
-    mask1 = arange > (n_hist-1) - seq_len_
-    mask2 = arange < seq_len_
-    ob2[mask2] = ob1[mask1]
-    return ob2.flatten(start_dim=1)
-
-
-@torch.jit.script
-def observe_disc(state_hist: torch.Tensor, seq_len: torch.Tensor, key_links: Optional[List[int]]=None,
-    parent_link: Optional[int]=None, local_pos: bool=False, local_height: bool = True,
+def observe_iccgan(state_hist: torch.Tensor, seq_len: torch.Tensor,
+    key_links: Optional[List[int]]=None, parent_link: Optional[int]=None,
+    include_velocity: bool=True
 ):
-    # state_hist: L x N x D
+    # state_hist: L x N x (1+N_links) x 13
 
     UP_AXIS = 2
     n_hist = state_hist.size(0)
@@ -783,46 +745,51 @@ def observe_disc(state_hist: torch.Tensor, seq_len: torch.Tensor, key_links: Opt
         link_pos, link_orient = link_tensor[:,:,key_links,:3], link_tensor[:,:,key_links,3:7]
 
     if parent_link is None:
-        origin = root_tensor[-1,:, :3].clone()               # N x 3
-        origin[..., UP_AXIS] = 0
-        orient = root_tensor[-1,:,3:7]                    # N x 4
-    else:
-        origin = link_tensor[:,:, parent_link, :3]      # L x N x 3
-        orient = link_tensor[:,:, parent_link,3:7]      # L x N x 4
-        if not local_height:
-            origin = origin.clone()
-            origin[..., UP_AXIS] = 0
+        origin = root_tensor[-1,:, :3]              # N x 3
+        orient = root_tensor[-1,:,3:7]              # N x 4
 
-    if local_pos:
-        orient_inv = quatconj(orient)               # N x 4 or L x N x 4
-    else:
-        heading = heading_zup(orient)
+        heading = heading_zup(orient)               # N
         up_dir = torch.zeros_like(origin)
-        up_dir[..., UP_AXIS] = 1
-        orient_inv = axang2quat(up_dir, -heading)
-    origin.unsqueeze_(-2)                           # N x 1 x 3 or L x N x 1 x 3
+        up_dir[..., UP_AXIS] = 1                    # N x 3
+        orient_inv = axang2quat(up_dir, -heading)   # N x 4
+        orient_inv = orient_inv.view(1, -1, 1, 4)   # 1 x N x 1 x 4
 
-    if parent_link is None:
-        orient_inv = orient_inv.view(1, -1, 1, 4)  # 1 x N x 1 x 4
+        origin = origin.clone()
+        origin[..., UP_AXIS] = 0                    # N x 3
+        origin.unsqueeze_(-2)                       # N x 1 x 3
     else:
-        orient_inv = orient_inv.unsqueeze_(-2)     # L x N x 1 x 4
+        origin = link_tensor[:,:, parent_link, :3]  # L x N x 3
+        orient = link_tensor[:,:, parent_link,3:7]  # L x N x 4
+        orient_inv = quatconj(orient)               # L x N x 4
+        orient_inv.unsqueeze_(-2)                   # L x N x 1 x 4
+        origin = origin.unsqueeze(-2)               # L x N x 1 x 3
 
     ob_link_pos = link_pos - origin                                     # L x N x n_links x 3 
     ob_link_pos = rotatepoint(orient_inv, ob_link_pos)
     ob_link_orient = quatmultiply(orient_inv, link_orient)              # L x N x n_links x 4
 
-    ob = torch.cat((ob_link_pos, ob_link_orient), -1)                   # L x N x n_links x 7
-    ob = ob.view(n_hist, n_inst, -1)                                    # L x N x (n_links x 7)
+    if include_velocity:
+        if key_links is None:
+            link_lin_vel, link_ang_vel = link_tensor[...,7:10], link_tensor[...,10:13]
+        else:
+            link_lin_vel, link_ang_vel = link_tensor[:,:,key_links,7:10], link_tensor[:,:,key_links,10:13]
+        ob_link_lin_vel = rotatepoint(orient_inv, link_lin_vel)         # L x N x n_links x 3
+        ob_link_ang_vel = rotatepoint(orient_inv, link_ang_vel)         # L x N x n_links x 3
+        ob = torch.cat((ob_link_pos, ob_link_orient,
+            ob_link_lin_vel, ob_link_ang_vel), -1)                      # L x N x n_links x 13
+    else:
+        ob = torch.cat((ob_link_pos, ob_link_orient), -1)               # L x N x n_links x 7
+    ob = ob.view(n_hist, n_inst, -1)                                    # L x N x (n_links x 7 or 13)
 
-    ob1 = ob.permute(1, 0, 2)                                           # N x L x (n_links x 7)
+    ob1 = ob.permute(1, 0, 2)                                           # N x L x (n_links x 7 or 13)
     ob2 = torch.zeros_like(ob1)
     arange = torch.arange(n_hist, dtype=seq_len.dtype, device=seq_len.device).unsqueeze_(0)
     seq_len_ = seq_len.unsqueeze(1)
     mask1 = arange > (n_hist-1) - seq_len_
     mask2 = arange < seq_len_
     ob2[mask2] = ob1[mask1]
-    
     return ob2
+
 
 
 
@@ -1004,7 +971,7 @@ def observe_iccgan_target(state_hist: torch.Tensor, seq_len: torch.Tensor,
     sp.clip_(max=sp_upper_bound)
     dist.div_(3).clip_(max=1.5)
 
-    return torch.cat((ob, x.unsqueeze_(-1), y.unsqueeze_(-1), sp.unsqueeze_(-1), dist.unsqueeze_(-1)), -1)
+    return torch.cat((ob.flatten(start_dim=1), x.unsqueeze_(-1), y.unsqueeze_(-1), sp.unsqueeze_(-1), dist.unsqueeze_(-1)), -1)
 
 
 

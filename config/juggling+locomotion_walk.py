@@ -31,7 +31,6 @@ discriminators = {
         motion_file = "assets/motions_binary/acrobatics/juggling.pkl",
         key_links = ["right_upper_arm", "right_lower_arm", "right_hand", "left_upper_arm", "left_lower_arm", "left_hand"],
         parent_link = "torso",
-        local_pos = True,
         replay_speed = lambda n: np.random.uniform(0.8, 1.2, size=(n,)),
         weight = 0.1
     ),
