@@ -32,6 +32,7 @@ class Env(object):
     UP_AXIS = 2
     CHARACTER_MODEL = None
     CAMERA_POS= 0, -4.5, 2.0
+    CAMERA_FOLLOWING = True
 
     def __init__(self,
         n_envs: int, fps: int=30, frameskip: int=2,
@@ -53,6 +54,7 @@ class Env(object):
         self.episode_length = episode_length
         self.device = torch.device(compute_device)
         self.camera_pos = self.CAMERA_POS
+        self.camera_following = self.CAMERA_FOLLOWING
         if graphics_device is None:
             graphics_device = compute_device
         self.character_model = self.CHARACTER_MODEL if character_model is None else character_model
@@ -79,7 +81,6 @@ class Env(object):
         
         self.refresh_tensors()
         self.viewer_pause = False
-        self.camera_following = True
         self.viewer_advance = False
         tar_env = len(self.envs)//4 + int(len(self.envs)**0.5)//2
         base_pos = self.root_pos[tar_env].cpu()
@@ -449,14 +450,10 @@ class ICCGANHumanoid(Env):
         self.enable_goal_timer = parse_kwarg(kwargs, "enable_goal_timer", self.ENABLE_GOAL_TIMER)
         self.goal_tensor_dim = parse_kwarg(kwargs, "goal_tensor_dim", self.GOAL_TENSOR_DIM)
         self.ob_horizon = parse_kwarg(kwargs, "ob_horizon", self.OB_HORIZON)
-        key_links = parse_kwarg(kwargs, "key_links", self.KEY_LINKS)
+        self.key_links = parse_kwarg(kwargs, "key_links", self.KEY_LINKS)
         self.parent_link = parse_kwarg(kwargs, "parent_link", self.PARENT_LINK)
         super().__init__(*args, **kwargs)
 
-        self.key_links = None if key_links is None else sorted([
-            self.gym.find_actor_rigid_body_handle(self.envs[0], self.actors[0], link) for link in key_links
-        ])
-        
         n_envs = len(self.envs)
         n_links = self.char_link_tensor.size(1)
         n_dofs = self.char_joint_tensor.size(1)
@@ -652,6 +649,10 @@ class ICCGANHumanoid(Env):
         self.state_hist = torch.empty((self.ob_horizon+1, len(self.envs), 13 + n_links*13),
             dtype=self.root_tensor.dtype, device=self.device)
 
+        self.key_links = None if self.key_links is None else sorted([
+            self.gym.find_actor_rigid_body_handle(self.envs[0], self.actors[0], link) for link in self.key_links
+        ])
+        
         if self.goal_tensor_dim:
             try:
                 self.goal_tensor = [
