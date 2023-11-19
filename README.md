@@ -37,7 +37,7 @@ Download IsaacGym Pr4 from the [official site](https://developer.nvidia.com/isaa
 
     $ python main.py <configure_file> --ckpt <checkpoint_dir>
 
-We provide our configure files in `config` folder for reference. To reproduce the examples shown in the paper, e.g. `Aiming+Crouch`, please run the training by
+We provide our configure files in `config` folder for reference. To reproduce the examples shown in the paper, e.g. `Juggling+Walk`, please run the training by
 
     $ python main.py config/juggling+locomotion_walk.py --ckpt ckpt_juggling+locomotion_walk
 
@@ -50,7 +50,7 @@ The training can be done on a single GPU. Use `--device` option to specify the d
 
     $ python main.py <configure_file> --ckpt <checkpoint_dir> --test
 
-We provide pretrained policy models in `pretrained` folder. To evaluate a pretrained policy, e.g. `Aiming+Crouch`, please run
+We provide pretrained policy models in `pretrained` folder. To evaluate a pretrained policy, e.g. `Juggling+Walk`, please run
 
     $ python main.py config/juggling+locomotion_walk.py --ckpt pretrained/juggling+locomotion_walk --test
 
