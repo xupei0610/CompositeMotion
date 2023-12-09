@@ -36,6 +36,8 @@ class RunningMeanStd(torch.nn.Module):
         self.var.copy_(m / count_)
         self.count.copy_(count_)
 
+    def reset_counter(self):
+        self.count.fill_(1)
 
 class DiagonalPopArt(torch.nn.Module):
     def __init__(self, dim: int, weight: torch.Tensor, bias: torch.Tensor, momentum:float=0.1):
