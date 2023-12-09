@@ -12,6 +12,13 @@ This is the official implementation for
 [[Youtube](https://www.youtube.com/watch?v=VHMyvDD3B_o)]
 ([SCA'21](https://www.youtube.com/watch?v=vPzpCarkm74), [PACMCGIT](https://dl.acm.org/doi/abs/10.1145/3480148))
 
+We also refer to the extended implementation
+
+- _*AdaptNet: Policy Adaptation for Physics-Based Character Control*_
+[[arXiv](http://arxiv.org/abs/2310.00239)]
+[[Youtube](https://youtu.be/WxmJSCNFb28)]
+([SIGGRAPH Asia'23](https://asia.siggraph.org/2023/presentation/?id=papers_543&sess=sess120), [TOG](https://dl.acm.org/doi/10.1145/3618375))
+
 
 ![](doc/teaser_tennis.png)
 
