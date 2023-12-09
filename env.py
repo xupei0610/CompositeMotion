@@ -730,7 +730,7 @@ class ICCGANHumanoid(Env):
 @torch.jit.script
 def observe_iccgan(state_hist: torch.Tensor, seq_len: torch.Tensor,
     key_links: Optional[List[int]]=None, parent_link: Optional[int]=None,
-    include_velocity: bool=True
+    include_velocity: bool=True, ground_height:Optional[torch.Tensor]=None
 ):
     # state_hist: L x N x (1+N_links) x 13
 
@@ -756,7 +756,10 @@ def observe_iccgan(state_hist: torch.Tensor, seq_len: torch.Tensor,
         orient_inv = orient_inv.view(1, -1, 1, 4)   # 1 x N x 1 x 4
 
         origin = origin.clone()
-        origin[..., UP_AXIS] = 0                    # N x 3
+        if ground_height is None:
+            origin[..., UP_AXIS] = 0                # N x 3
+        else:
+            origin[..., UP_AXIS] = ground_height    # N x 3
         origin.unsqueeze_(-2)                       # N x 1 x 3
     else:
         origin = link_tensor[:,:, parent_link, :3]  # L x N x 3
@@ -948,9 +951,9 @@ class ICCGANHumanoidTarget(ICCGANHumanoid):
 @torch.jit.script
 def observe_iccgan_target(state_hist: torch.Tensor, seq_len: torch.Tensor,
     target_tensor: torch.Tensor, timer: torch.Tensor,
-    sp_upper_bound: float, fps: int
+    sp_upper_bound: float, fps: int, ground_height: Optional[torch.Tensor]=None
 ):
-    ob = observe_iccgan(state_hist, seq_len)
+    ob = observe_iccgan(state_hist, seq_len, ground_height=ground_height)
 
     root_pos = state_hist[-1, :, :3]
     root_orient = state_hist[-1, :, 3:7]
