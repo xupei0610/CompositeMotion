@@ -62,8 +62,8 @@ class Env(object):
         sim_params = self.setup_sim_params()
         self.gym = gymapi.acquire_gym()
         self.sim = self.gym.create_sim(compute_device, graphics_device, gymapi.SIM_PHYSX, sim_params)
-        self.add_ground()
         self.envs, self.actors = self.create_envs(n_envs)
+        self.add_ground()
         self.setup_action_normalizer()
         self.create_tensors()
 
@@ -148,6 +148,9 @@ class Env(object):
         plane_params.dynamic_friction = 1.0
         plane_params.restitution = 0.0
         self.gym.add_ground(self.sim, plane_params)
+
+    def ground_height(self, p, env_ids=None):
+        return None
 
     def add_actor(self, env, i):
         pass
@@ -419,7 +422,7 @@ import numpy as np
 
 class ICCGANHumanoid(Env):
 
-    CHARACTER_MODEL = "assets/humanoid.xml"
+    CHARACTER_MODEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "humanoid.xml")
     CONTROLLABLE_LINKS = ["torso", "head", 
         "right_upper_arm", "right_lower_arm",
         "left_upper_arm", "left_lower_arm", 
@@ -611,8 +614,14 @@ class ICCGANHumanoid(Env):
         if self.contactable_links is not False:
             masked_contact[self.contactable_links] = 0          # N x n_links x 3
 
-        contacted = torch.any(masked_contact > 1., dim=-1)  # N x n_links
-        too_low = self.link_pos[..., self.UP_AXIS] < 0.15    # N x n_links
+        contacted = torch.any(masked_contact > 1., dim=-1)      # N x n_links
+
+        ground_height = self.ground_height(self.char_root_tensor[:, :3])
+        if ground_height is not None:
+            low_threshold = ground_height.add_(0.15).unsqueeze_(1)
+        else:
+            low_threshold = 0.15                                      # N x n_links
+        too_low = self.link_pos[..., self.UP_AXIS] < low_threshold    # N x n_links
 
         terminate = torch.any(torch.logical_and(contacted, too_low), -1)    # N x
         terminate *= (self.lifetime > 1)
@@ -620,7 +629,14 @@ class ICCGANHumanoid(Env):
 
     def init_state(self, env_ids):
         motion_ids, motion_times = self.ref_motion.sample(len(env_ids))
-        return self.ref_motion.state(motion_ids, motion_times)
+        ref_root_tensor, ref_link_tensor, ref_joint_tensor = self.ref_motion.state(motion_ids, motion_times)
+
+        ground_height = self.ground_height(ref_root_tensor[:, :3], env_ids)
+        if ground_height is not None:
+            ref_root_tensor[:, 2] += ground_height
+            ref_link_tensor[:, :, 2] += ground_height.unsqueeze_(1)
+
+        return ref_root_tensor, ref_link_tensor, ref_joint_tensor
     
     def create_tensors(self):
         super().create_tensors()
@@ -682,14 +698,18 @@ class ICCGANHumanoid(Env):
     
     def _observe(self, env_ids):
         if env_ids is None:
+            ground_height = self.ground_height(self.state_hist[-1, :, :3])
             return observe_iccgan(
-                self.state_hist[-self.ob_horizon:], self.ob_seq_lens, self.key_links, self.parent_link
+                self.state_hist[-self.ob_horizon:], self.ob_seq_lens, self.key_links, self.parent_link,
+                ground_height=ground_height
             ).flatten(start_dim=1)
         else:
+            ground_height = self.ground_height(self.state_hist[-1, env_ids, :3], env_ids)
             return observe_iccgan(
-                self.state_hist[-self.ob_horizon:][:, env_ids], self.ob_seq_lens[env_ids], self.key_links, self.parent_link
+                self.state_hist[-self.ob_horizon:][:, env_ids], self.ob_seq_lens[env_ids], self.key_links, self.parent_link,
+                ground_height=ground_height
             ).flatten(start_dim=1)
-    
+
     def observe_disc(self, state):
         seq_len = self.info["ob_seq_lens"]+1
         res = dict()
@@ -856,14 +876,18 @@ class ICCGANHumanoidTarget(ICCGANHumanoid):
     
     def _observe(self, env_ids):
         if env_ids is None:
+            ground_height = self.ground_height(self.state_hist[-1, :, :3])
             return observe_iccgan_target(
                 self.state_hist[-self.ob_horizon:], self.ob_seq_lens,
-                self.goal_tensor, self.goal_timer, sp_upper_bound=self.sp_upper_bound, fps=self.fps
+                self.goal_tensor, self.goal_timer, sp_upper_bound=self.sp_upper_bound, fps=self.fps,
+                ground_height=ground_height
             )
         else:
+            ground_height = self.ground_height(self.state_hist[-1, env_ids, :3], env_ids)
             return observe_iccgan_target(
                 self.state_hist[-self.ob_horizon:][:, env_ids], self.ob_seq_lens[env_ids],
-                self.goal_tensor[env_ids], self.goal_timer[env_ids], sp_upper_bound=self.sp_upper_bound, fps=self.fps
+                self.goal_tensor[env_ids], self.goal_timer[env_ids], sp_upper_bound=self.sp_upper_bound, fps=self.fps,
+                ground_height=ground_height
             )
 
     def reset_goal(self, env_ids, goal_tensor=None, goal_timer=None):
