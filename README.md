@@ -17,6 +17,8 @@ We also refer to the extended implementation
 - _*AdaptNet: Policy Adaptation for Physics-Based Character Control*_
 [[arXiv](http://arxiv.org/abs/2310.00239)]
 [[Youtube](https://youtu.be/WxmJSCNFb28)]
+[[webpage](https://pei-xu.github.io/AdaptNet)]
+[[code](https://github.com/xupei0610/AdaptNet)]
 ([SIGGRAPH Asia'23](https://asia.siggraph.org/2023/presentation/?id=papers_543&sess=sess120), [TOG](https://dl.acm.org/doi/10.1145/3618375))
 
 
