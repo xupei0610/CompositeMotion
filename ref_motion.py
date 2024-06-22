@@ -1,4 +1,4 @@
-from typing import Sequence
+from typing import Sequence, Union
 import os
 import torch
 import numpy as np
@@ -20,14 +20,8 @@ Motion = namedtuple("Motion",
 
 import xml.etree.ElementTree as XMLParser
 def load_mjcf(filename: str):
-    tree = XMLParser.parse(filename)
-    doc = tree.getroot()
-    world = doc.find("worldbody")
-    if world is None:
-        raise ValueError("Failed to find worldbody definition from MJCF file", filename)
-    root = world.find("body")
-    if root is None:
-        raise ValueError("Failed to find any body definition from MJCF file", filename)
+    if type(filename) == str:
+        filename = [filename]
     
     nodes = []
     parents = []
@@ -35,7 +29,7 @@ def load_mjcf(filename: str):
     def parse(node, pid):
         n = node.attrib.get("name")
         p = np.array(list(map(float, node.attrib.get("pos").split())))
-        # NOTE for body rotation offset, only the quat attribute defined dierctly in the body element is supported
+        # NOTE for body rotation offset, only the quat attribute defined directly in the body element is supported
         q = node.attrib.get("quat")
         if q is None:
             q = [0., 0., 0., 1.]
@@ -50,7 +44,17 @@ def load_mjcf(filename: str):
         for child in node.findall("body"):
             parse(child, nid)
 
-    parse(root, -1)
+    for f in filename:
+        tree = XMLParser.parse(f)
+        doc = tree.getroot()
+        world = doc.find("worldbody")
+        if world is None:
+            raise ValueError("Failed to find worldbody definition from MJCF file", f)
+        root = world.find("body")
+        if root is None:
+            raise ValueError("Failed to find any body definition from MJCF file", f)
+    
+        parse(root, -1)
     return Skeleton(
         nodes = nodes,
         parents = parents,
@@ -116,7 +120,7 @@ def compute_motion(fps:int, skeleton: Skeleton, local_q, local_p):
 
 
 class ReferenceMotion():
-    def __init__(self, motion_file: str or Sequence[str],
+    def __init__(self, motion_file: Union[str, Sequence[str]],
         character_model: str, 
         key_links: Sequence[int], 
         controllable_links: Sequence[int], 
