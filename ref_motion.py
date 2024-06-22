@@ -12,7 +12,7 @@ from utils import quat2expmap,  quatconj, quatmultiply, slerp, quat2expmap, rota
 
 
 Skeleton = namedtuple("Skeleton",
-    "nodes parents trans rot"
+    "nodes parents trans rot free_root"
 )
 Motion = namedtuple("Motion",
     "fps pos orient ang_vel lin_vel local_q local_p local_vel"
@@ -44,6 +44,7 @@ def load_mjcf(filename: str):
         for child in node.findall("body"):
             parse(child, nid)
 
+    free_root = []
     for f in filename:
         tree = XMLParser.parse(f)
         doc = tree.getroot()
@@ -53,23 +54,30 @@ def load_mjcf(filename: str):
         root = world.find("body")
         if root is None:
             raise ValueError("Failed to find any body definition from MJCF file", f)
+        freejoint = root.find("freejoint")
+        free_root.append(freejoint is not None)
     
         parse(root, -1)
     return Skeleton(
         nodes = nodes,
         parents = parents,
         trans = torch.from_numpy(np.array(t, dtype=float)),
-        rot = torch.from_numpy(np.array(r, dtype=float))
+        rot = torch.from_numpy(np.array(r, dtype=float)),
+        free_root = free_root
     )
 
 def compute_motion(fps:int, skeleton: Skeleton, local_q, local_p):
     orient = []
     pos = []
+    i = 0
     for nid in range(len(skeleton.nodes)):
         pid = skeleton.parents[nid]
         if pid == -1:
             orient.append(quatmultiply(skeleton.rot[nid], local_q[:, nid]))
             pos.append(rotatepoint(skeleton.rot[nid].unsqueeze(0), local_p[:, nid]))
+            if not skeleton.free_root[i]:
+                pos[-1] += skeleton.trans[nid].unsqueeze(0)
+            i += 1
             root = nid
         else:
             q = quatmultiply(orient[pid], skeleton.rot[nid])
