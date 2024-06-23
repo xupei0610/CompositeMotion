@@ -85,6 +85,7 @@ class Env(object):
             gymtorch.unwrap_tensor(self.joint_tensor),
         )
         self.refresh_tensors()
+        self.train()
         self.viewer_pause = False
         self.viewer_advance = False
         tar_env = len(self.envs)//4 + int(len(self.envs)**0.5)//2
@@ -111,6 +112,12 @@ class Env(object):
             self.gym.destroy_viewer(self.viewer)
         if hasattr(self, "sim"):
             self.gym.destroy_sim(self.sim)
+
+    def eval(self):
+        self.training = False
+        
+    def train(self):
+        self.training = True
 
     def vector_up(self, val: float, base_vector=None):
         if base_vector is None:
@@ -496,7 +503,7 @@ class ICCGANHumanoid(Env):
             reward_weights = torch.empty((len(self.envs), self.rew_dim), dtype=torch.float32, device=self.device)
             if not hasattr(goal_reward_weight, "__len__"):
                 goal_reward_weight = [goal_reward_weight]
-            assert(self.rew_dim == len(goal_reward_weight))
+            assert self.rew_dim == len(goal_reward_weight), "{} vs {}".format(self.rew_dim, len(goal_reward_weight))
             for i, w in zip(range(self.rew_dim), goal_reward_weight):
                 reward_weights[:, i] = w
         elif self.rew_dim:
@@ -559,8 +566,9 @@ class ICCGANHumanoid(Env):
         if max_ob_horizon != self.state_hist.size(0):
             self.state_hist = torch.zeros((max_ob_horizon, *self.state_hist.shape[1:]),
                 dtype=self.root_tensor.dtype, device=self.device)
-
-        if self.rew_dim > 0:
+        if self.reward_weights is None:
+            self.reward_weights = torch.ones((n_envs, 1), dtype=torch.float32, device=self.device)
+        elif self.rew_dim > 0:
             if self.rew_dim > 1:
                 self.reward_weights *= (1-reward_weights.sum(dim=-1, keepdim=True))
             else:
@@ -568,14 +576,17 @@ class ICCGANHumanoid(Env):
             self.reward_weights[:, -self.rew_dim:] = reward_weights
             
         self.info["ob_seq_lens"] = torch.zeros_like(self.lifetime)  # dummy result
-        self.info["disc_obs"] = self.observe_disc(self.state_hist)  # dummy result
-        self.info["disc_obs_expert"] = self.info["disc_obs"]        # dummy result
         self.goal_dim = self.GOAL_DIM
         self.state_dim = (self.ob_dim-self.goal_dim)//self.ob_horizon
-        self.disc_dim = {
-            name: ob.size(-1)
-            for name, ob in self.info["disc_obs"].items()
-        }
+        if self.discriminators:
+            self.info["disc_obs"] = self.observe_disc(self.state_hist)  # dummy result
+            self.info["disc_obs_expert"] = self.info["disc_obs"]        # dummy result
+            self.disc_dim = {
+                name: ob.size(-1)
+                for name, ob in self.info["disc_obs"].items()
+            }
+        else:
+            self.disc_dim = {}
 
         init_pose = motion_file
         disc_ref_motion = dict()
@@ -619,8 +630,9 @@ class ICCGANHumanoid(Env):
     
     def step(self, actions):
         obs, rews, dones, info = super().step(actions)
-        info["disc_obs"] = self.observe_disc(self.state_hist)
-        info["disc_obs_expert"], info["disc_seq_len"] = self.fetch_real_samples()
+        if self.discriminators and self.training:
+            info["disc_obs"] = self.observe_disc(self.state_hist)
+            info["disc_obs_expert"], info["disc_seq_len"] = self.fetch_real_samples()
         return obs, rews, dones, info
 
     def overtime_check(self):

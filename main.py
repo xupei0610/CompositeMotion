@@ -54,6 +54,7 @@ TRAINING_PARAMS = dict(
 
 def test(env, model):
     model.eval()
+    env.eval()
     env.reset()
     while not env.request_quit:
         obs, info = env.reset_done()
@@ -100,6 +101,7 @@ def train(env, model, ckpt_dir, training_params):
 
     epoch = 0
     model.eval()
+    env.train()
     env.reset()
     tic = time.time()
     while not env.request_quit:
@@ -113,9 +115,10 @@ def train(env, model, ckpt_dir, training_params):
             not_done = (~dones).unsqueeze_(-1)
             terminate = info["terminate"]
             
-            fakes = info["disc_obs"]
-            reals = info["disc_obs_expert"]
-            disc_seq_len = info["disc_seq_len"]
+            if env.discriminators:
+                fakes = info["disc_obs"]
+                reals = info["disc_obs_expert"]
+                disc_seq_len = info["disc_seq_len"]
 
             values_ = model.evaluate(obs_, seq_len)
 
@@ -131,73 +134,73 @@ def train(env, model, ckpt_dir, training_params):
             buffer["r"].append(rews)
         if multi_critics:
             buffer["reward_weights"].append(reward_weights)
-        for name, fake in fakes.items():
-            buffer_disc[name]["fake"].append(fake)
-            buffer_disc[name]["real"].append(reals[name])
-            buffer_disc[name]["seq_len"].append(disc_seq_len[name])
+        if env.discriminators:
+            for name, fake in fakes.items():
+                buffer_disc[name]["fake"].append(fake)
+                buffer_disc[name]["real"].append(reals[name])
+                buffer_disc[name]["seq_len"].append(disc_seq_len[name])
 
         if len(buffer["s"]) == HORIZON:
-            with torch.no_grad():
-                disc_data_training = []
-                disc_data_raw = []
-                for name, data in buffer_disc.items():
-                    disc = model.discriminators[name]
-                    fake = torch.cat(data["fake"])
-                    real = torch.cat(data["real"])
-                    seq_len = torch.cat(data["seq_len"])
-                    end_frame = seq_len - 1
-                    disc_data_raw.append((name, disc, fake, end_frame))
+            disc_data = []
+            if env.discriminators:
+                with torch.no_grad():
+                    for name, data in buffer_disc.items():
+                        disc = model.discriminators[name]
+                        fake = torch.cat(data["fake"])
+                        real = torch.cat(data["real"])
+                        seq_len = torch.cat(data["seq_len"])
+                        end_frame = seq_len - 1
 
-                    length = torch.arange(fake.size(1), 
-                        dtype=end_frame.dtype, device=end_frame.device)
-                    mask = length.unsqueeze_(0) <= end_frame.unsqueeze(1)
-                    disc.ob_normalizer.update(fake[mask])
-                    disc.ob_normalizer.update(real[mask])
+                        length = torch.arange(fake.size(1), 
+                            dtype=end_frame.dtype, device=end_frame.device)
+                        mask = length.unsqueeze_(0) <= end_frame.unsqueeze(1)
+                        disc.ob_normalizer.update(fake[mask])
+                        disc.ob_normalizer.update(real[mask])
 
-                    ob = disc.ob_normalizer(fake)
+                        disc_data.append((name, disc, real, fake, end_frame))
+
+                model.train()
+                n_samples = 0
+                for name, disc, real, fake, seq_end_frame_ in disc_data:
+                    real_loss = real_losses[name]
+                    fake_loss = fake_losses[name]
+                    opt = disc_optimizer[name]
                     ref = disc.ob_normalizer(real)
-                    disc_data_training.append((name, disc, ref, ob, end_frame))
+                    ob = disc.ob_normalizer(fake)
+                    if len(ref) != n_samples:
+                        n_samples = len(ref)
+                        idx = torch.randperm(n_samples)
+                    for batch in range(n_samples//BATCH_SIZE):
+                        sample = idx[batch*BATCH_SIZE:(batch+1)*BATCH_SIZE]
+                        r = ref[sample]
+                        f = ob[sample]
+                        seq_end_frame = seq_end_frame_[sample]
 
-            model.train()
-            n_samples = 0
-            for name, disc, ref, ob, seq_end_frame_ in disc_data_training:
-                real_loss = real_losses[name]
-                fake_loss = fake_losses[name]
-                opt = disc_optimizer[name]
-                if len(ref) != n_samples:
-                    n_samples = len(ref)
-                    idx = torch.randperm(n_samples)
-                for batch in range(n_samples//BATCH_SIZE):
-                    sample = idx[batch*BATCH_SIZE:(batch+1)*BATCH_SIZE]
-                    r = ref[sample]
-                    f = ob[sample]
-                    seq_end_frame = seq_end_frame_[sample]
+                        score_r = disc(r, seq_end_frame, normalize=False)
+                        score_f = disc(f, seq_end_frame, normalize=False)
+                    
+                        loss_r = torch.nn.functional.relu(1-score_r).mean()
+                        loss_f = torch.nn.functional.relu(1+score_f).mean()
 
-                    score_r = disc(r, seq_end_frame, normalize=False)
-                    score_f = disc(f, seq_end_frame, normalize=False)
-                
-                    loss_r = torch.nn.functional.relu(1-score_r).mean()
-                    loss_f = torch.nn.functional.relu(1+score_f).mean()
+                        with torch.no_grad():
+                            alpha = torch.rand(r.size(0), dtype=r.dtype, device=r.device)
+                            alpha = alpha.view(-1, *([1]*(r.ndim-1)))
+                            interp = alpha*r+(1-alpha)*f
+                        interp.requires_grad = True
+                        with torch.backends.cudnn.flags(enabled=False):
+                            score_interp = disc(interp, seq_end_frame, normalize=False)
+                        grad = torch.autograd.grad(
+                            score_interp, interp, torch.ones_like(score_interp),
+                            retain_graph=True, create_graph=True, only_inputs=True
+                        )[0]
+                        gp = grad.reshape(grad.size(0), -1).norm(2, dim=1).sub(1).square().mean()
+                        l = loss_f + loss_r + 10*gp
+                        l.backward()
+                        opt.step()
+                        opt.zero_grad()
 
-                    with torch.no_grad():
-                        alpha = torch.rand(r.size(0), dtype=r.dtype, device=r.device)
-                        alpha = alpha.view(-1, *([1]*(r.ndim-1)))
-                        interp = alpha*r+(1-alpha)*f
-                    interp.requires_grad = True
-                    with torch.backends.cudnn.flags(enabled=False):
-                        score_interp = disc(interp, seq_end_frame, normalize=False)
-                    grad = torch.autograd.grad(
-                        score_interp, interp, torch.ones_like(score_interp),
-                        retain_graph=True, create_graph=True, only_inputs=True
-                    )[0]
-                    gp = grad.reshape(grad.size(0), -1).norm(2, dim=1).sub(1).square().mean()
-                    l = loss_f + loss_r + 10*gp
-                    l.backward()
-                    opt.step()
-                    opt.zero_grad()
-
-                    real_loss.append(score_r.mean().item())
-                    fake_loss.append(score_f.mean().item())
+                        real_loss.append(score_r.mean().item())
+                        fake_loss.append(score_f.mean().item())
 
 
             model.eval()
@@ -209,7 +212,7 @@ def train(env, model, ckpt_dir, training_params):
                 else:
                     reward_weights = None
                     rewards = None
-                for name, disc, ob, seq_end_frame in disc_data_raw:
+                for name, disc, _, ob, seq_end_frame in disc_data:
                     r = (disc(ob, seq_end_frame).clamp_(-1, 1)
                             .mean(-1, keepdim=True))
                     if rewards is None:
@@ -364,8 +367,7 @@ if __name__ == "__main__":
             name: env.DiscriminatorConfig(**prop)
             for name, prop in config.discriminators.items()
         }
-    else:
-        discriminators = {"_/full": env.DiscriminatorConfig()}
+
     if hasattr(config, "env_cls"):
         env_cls = getattr(env, config.env_cls)
     else:
