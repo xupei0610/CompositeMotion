@@ -12,7 +12,7 @@ from utils import quat2expmap,  quatconj, quatmultiply, slerp, quat2expmap, rota
 
 
 Skeleton = namedtuple("Skeleton",
-    "nodes parents trans rot free_root"
+    "nodes parents trans rot free_root dofs"
 )
 Motion = namedtuple("Motion",
     "fps pos orient ang_vel lin_vel local_q local_p local_vel"
@@ -26,6 +26,8 @@ def load_mjcf(filename: str):
     nodes = []
     parents = []
     t, r = [], []
+    dofs = []
+    dof_offset = [0]
     def parse(node, pid):
         n = node.attrib.get("name")
         p = np.array(list(map(float, node.attrib.get("pos").split())))
@@ -41,6 +43,13 @@ def load_mjcf(filename: str):
         t.append(p)
         r.append(q)
         nid = len(nodes)-1
+        has_dof = False
+        for joint in node.findall("joint"):
+            has_dof = True
+            axis = list(map(int, joint.attrib.get("axis").split()))
+            assert sum(axis)==1 and 1 in axis, joint.attrib.get("name")
+            dofs.append((joint.attrib.get("name"), nid, dof_offset[0]*3+axis.index(1)))
+        dof_offset[0] += int(has_dof)
         for child in node.findall("body"):
             parse(child, nid)
 
@@ -63,7 +72,8 @@ def load_mjcf(filename: str):
         parents = parents,
         trans = torch.from_numpy(np.array(t, dtype=float)),
         rot = torch.from_numpy(np.array(r, dtype=float)),
-        free_root = free_root
+        free_root = free_root,
+        dofs = dofs
     )
 
 def compute_motion(fps:int, skeleton: Skeleton, local_q, local_p):
@@ -130,28 +140,9 @@ def compute_motion(fps:int, skeleton: Skeleton, local_q, local_p):
 class ReferenceMotion():
     def __init__(self, motion_file: Union[str, Sequence[str]],
         character_model: str, 
-        key_links: Sequence[int], 
-        controllable_links: Sequence[int], 
-        dofs: Sequence[int],
+        key_links: Sequence[int],
         device: torch.device
     ):
-        self.character_model = character_model
-        
-        assert(len(controllable_links) == len(dofs))
-        self.key_links = np.array(key_links)
-        self.controllable_links = controllable_links
-        self.dofs = []
-        for i, dof in enumerate(dofs):
-            assert all(_ in "XYZ0123" for _ in set(str(dof)))
-            for axis in str(dof):
-                if axis == "X" or axis == "0":
-                    self.dofs.append(i*3)
-                elif axis == "Y" or axis == "1":
-                    self.dofs.append(i*3+1)
-                elif axis == "Z" or axis == "2":
-                    self.dofs.append(i*3+2)
-                else:
-                    self.dofs.extend((i*3, i*3+1, i*3+2))
         self.device = device
 
         self.motion = []
@@ -160,14 +151,21 @@ class ReferenceMotion():
         self.motion_dt = []
         self.motion_n_frames = []
 
+        skeleton = load_mjcf(character_model)
+        self.dofs = [idx for _, __, idx in skeleton.dofs]
+        if key_links is None:
+            key_links = list(np.arange(len(skeleton.nodes)))
+        controllable_links = list(set([idx for _, idx, __  in skeleton.dofs]))
+        self.n_key_links = len(key_links)
+        self.n_controllable_links = len(controllable_links)
         if type(motion_file) == str:
-            self.load_motions(motion_file)
+            self.load_motions(motion_file, skeleton, controllable_links, key_links)
         else:
             for m in motion_file:
-                self.load_motions(m)
+                self.load_motions(m, skeleton, controllable_links, key_links)
             self.motion_weight = np.array(self.motion_weight)
 
-    def load_motions(self, motion_file):
+    def load_motions(self, motion_file, skeleton, controllable_links, key_links):
         self.motion_length = list(self.motion_length)
         self.motion_dt = list(self.motion_dt)
         self.motion_n_frames = list(self.motion_n_frames)
@@ -188,11 +186,10 @@ class ReferenceMotion():
         n_motion_files = len(motion_files)
         tot_weights, tot_length = 0, 0
         tot_length_with_weights = 0
+
         for f, motion_file in enumerate(motion_files):
             print("Loading {:d}/{:d} motion files: {:s}".format(f + 1, n_motion_files, motion_file))
 
-            skeleton = load_mjcf(self.character_model)
-            
             if os.path.splitext(motion_file)[1] == ".json":
                 with open(motion_file, "r") as _:
                     motion_data = json.load(_)
@@ -232,7 +229,6 @@ class ReferenceMotion():
                 t = torch.from_numpy(np.array(t))
                 motion = compute_motion(fps, skeleton, r, t)
             else:
-                # FIXME
                 with open(motion_file, "rb") as _:
                     motion = pickle.load(_)
                 n_frames = len(motion.pos)
@@ -240,11 +236,23 @@ class ReferenceMotion():
             
             dt = 1.0 / fps
             motion_len = dt * (n_frames - 1)
+            motion_ = (
+                motion.pos[:,0].clone(),
+                motion.orient[:,0].clone(),
+                torch.cat((motion.lin_vel[:,0], motion.ang_vel[:,0]), -1),
+                motion.pos[:,key_links].clone(),
+                motion.orient[:,key_links].clone(),
+                torch.cat((motion.lin_vel[:,key_links], motion.ang_vel[:,key_links]), -1),
+                motion.local_q[:,controllable_links].clone(),
+                motion.local_p[:,controllable_links].clone(),
+                motion.local_vel[:,controllable_links].clone()
+            )
 
             print("\t{:.4f}s, {:d} Hz, {:d} frames".format(motion_len, fps, n_frames))
 
 
-            self.motion.append(motion)
+            del motion
+            self.motion.append(motion_)
             self.motion_dt.append(dt)
             self.motion_n_frames.append(n_frames)
             self.motion_length.append(motion_len)
@@ -284,30 +292,29 @@ class ReferenceMotion():
         motion_time = phase * motion_len
         return motion_ids, motion_time
 
-    def state(self, motion_ids, motion_times):
+    def state(self, motion_ids, motion_times, with_joint_tensor=True):
         n = len(motion_ids)
-        n_key_links = len(self.key_links)
-        n_controllable_links = len(self.controllable_links)
         device = self.device
 
+        n_key_links = self.n_key_links
         root_pos0 = torch.empty((n, 3), dtype=torch.float, requires_grad=False)
         root_pos1 = torch.empty((n, 3), dtype=torch.float, requires_grad=False)
         root_orient = torch.empty((n, 4), dtype=torch.float, requires_grad=False)
         root_orient0 = torch.empty((n, 4), dtype=torch.float, requires_grad=False)
         root_orient1 = torch.empty((n, 4), dtype=torch.float, requires_grad=False)
-        root_lin_vel = torch.empty((n, 3), dtype=torch.float, requires_grad=False)
-        root_ang_vel = torch.empty((n, 3), dtype=torch.float, requires_grad=False)
-        joint_q0 = torch.empty((n, n_controllable_links, 4), dtype=torch.float, requires_grad=False)
-        joint_q1 = torch.empty((n, n_controllable_links, 4), dtype=torch.float, requires_grad=False)
-        joint_p0 = torch.empty((n, n_controllable_links, 3), dtype=torch.float, requires_grad=False)
-        joint_p1 = torch.empty((n, n_controllable_links, 3), dtype=torch.float, requires_grad=False)
-        joint_vel = torch.empty((n, n_controllable_links, 3), dtype=torch.float, requires_grad=False)
+        root_vel = torch.empty((n, 6), dtype=torch.float, requires_grad=False)
         link_pos0 = torch.empty((n, n_key_links, 3), dtype=torch.float, requires_grad=False)
         link_pos1 = torch.empty((n, n_key_links, 3), dtype=torch.float, requires_grad=False)
         link_orient0 = torch.empty((n, n_key_links, 4), dtype=torch.float, requires_grad=False)
         link_orient1 = torch.empty((n, n_key_links, 4), dtype=torch.float, requires_grad=False)
-        link_lin_vel = torch.empty((n, n_key_links, 3), dtype=torch.float, requires_grad=False)
-        link_ang_vel = torch.empty((n, n_key_links, 3), dtype=torch.float, requires_grad=False)
+        link_vel = torch.empty((n, n_key_links, 6), dtype=torch.float, requires_grad=False)
+        if with_joint_tensor:
+            n_controllable_links = self.n_controllable_links
+            joint_q0 = torch.empty((n, n_controllable_links, 4), dtype=torch.float, requires_grad=False)
+            joint_q1 = torch.empty((n, n_controllable_links, 4), dtype=torch.float, requires_grad=False)
+            joint_p0 = torch.empty((n, n_controllable_links, 3), dtype=torch.float, requires_grad=False)
+            joint_p1 = torch.empty((n, n_controllable_links, 3), dtype=torch.float, requires_grad=False)
+            joint_vel = torch.empty((n, n_controllable_links, 3), dtype=torch.float, requires_grad=False)
 
         motion_len = self.motion_length[motion_ids]
         num_frames = self.motion_n_frames[motion_ids]
@@ -329,60 +336,55 @@ class ReferenceMotion():
             fid0_ = fid0[ids]
             fid1_ = fid1[ids]
 
-            root_pos0[ids]  = motion.pos[fid0_, 0]
-            root_pos1[ids]  = motion.pos[fid1_, 0]
-            root_orient0[ids] = motion.orient[fid0_, 0]
-            root_orient1[ids]  = motion.orient[fid1_, 0]
-            root_lin_vel[ids] = motion.lin_vel[fid0_, 0]
-            root_ang_vel[ids] = motion.ang_vel[fid0_, 0]
+            root_pos0[ids]  = motion[0][fid0_]
+            root_pos1[ids]  = motion[0][fid1_]
+            root_orient0[ids] = motion[1][fid0_]
+            root_orient1[ids]  = motion[1][fid1_]
+            root_vel[ids] = motion[2][fid0_]
             
-            fid0_ = fid0_[:, None]
-            fid1_ = fid1_[:, None]
+            link_pos0[ids] = motion[3][fid0_]
+            link_pos1[ids] = motion[3][fid1_]
+            link_orient0[ids] = motion[4][fid0_]
+            link_orient1[ids] = motion[4][fid1_]
+            link_vel[ids] = motion[5][fid0_]
 
-            joint_q0[ids] = motion.local_q[fid0_, self.controllable_links]
-            joint_q1[ids] = motion.local_q[fid1_, self.controllable_links]
-            joint_p0[ids] = motion.local_p[fid0_, self.controllable_links]
-            joint_p1[ids] = motion.local_p[fid1_, self.controllable_links]
-            joint_vel[ids] = motion.local_vel[fid0_, self.controllable_links]
-
-            link_pos0[ids] = motion.pos[fid0_, self.key_links]
-            link_pos1[ids] = motion.pos[fid1_, self.key_links]
-            link_orient0[ids] = motion.orient[fid0_, self.key_links]
-            link_orient1[ids] = motion.orient[fid1_, self.key_links]
-            link_lin_vel[ids] = motion.lin_vel[fid0_, self.key_links]
-            link_ang_vel[ids] = motion.ang_vel[fid0_, self.key_links]
-
-        frac = torch.tensor(frac, device=device,  dtype=root_pos0.dtype).unsqueeze_(-1)
-        frac_ = frac[..., None]
+            if with_joint_tensor:
+                joint_q0[ids] = motion[6][fid0_]
+                joint_q1[ids] = motion[6][fid1_]
+                joint_p0[ids] = motion[7][fid0_]
+                joint_p1[ids] = motion[7][fid1_]
+                joint_vel[ids] = motion[8][fid0_]
 
         root_pos0 = root_pos0.to(device)
         root_pos1 = root_pos1.to(device)
         root_orient0 = root_orient0.to(device)
         root_orient1 = root_orient1.to(device)
-        root_lin_vel = root_lin_vel.to(device)
-        root_ang_vel = root_ang_vel.to(device)
-        joint_q0 = joint_q0.to(device)
-        joint_q1 = joint_q1.to(device)
-        joint_p0 = joint_p0.to(device)
-        joint_p1 = joint_p1.to(device)
-        joint_vel = joint_vel.to(device)
+        root_vel = root_vel.to(device)
         link_pos0 = link_pos0.to(device)
         link_pos1 = link_pos1.to(device)
         link_orient0 = link_orient0.to(device)
         link_orient1 = link_orient1.to(device)
-        link_lin_vel = link_lin_vel.to(device)
-        link_ang_vel = link_ang_vel.to(device)
+        link_vel = link_vel.to(device)
+        frac = torch.tensor(frac, device=root_pos0.device, dtype=root_pos0.dtype).unsqueeze_(-1)
+        frac_ = frac[..., None]
 
         root_pos = ((1.0-frac)*root_pos0).add_(frac*root_pos1)
         root_orient = slerp(root_orient0, root_orient1, frac)
         link_pos = ((1.0-frac_)*link_pos0).add_(frac_*link_pos1)
         link_orient = slerp(link_orient0, link_orient1, frac_)
+        root_tensor = torch.cat((root_pos, root_orient, root_vel), -1)
+        link_tensor = torch.cat((link_pos, link_orient, link_vel), -1)
+        if not with_joint_tensor:
+            return root_tensor, link_tensor
+
+        joint_q0 = joint_q0.to(device)
+        joint_q1 = joint_q1.to(device)
+        joint_p0 = joint_p0.to(device)
+        joint_p1 = joint_p1.to(device)
+        joint_vel = joint_vel.to(device)
         joint_p = ((1.0-frac_)*joint_p0).add_(frac_*joint_p1)
         joint_q = slerp(joint_q0, joint_q1, frac_)
         joint_pos = (quat2expmap(joint_q) + joint_p).view(joint_q.size(0), -1)[:, self.dofs]
         joint_vel = joint_vel.view(joint_q.size(0), -1)[:, self.dofs]
-
-        root_tensor = torch.cat((root_pos, root_orient, root_lin_vel, root_ang_vel), -1)
-        link_tensor = torch.cat((link_pos, link_orient, link_lin_vel, link_ang_vel), -1)
         joint_tensor = torch.stack((joint_pos, joint_vel), -1)
         return root_tensor, link_tensor, joint_tensor

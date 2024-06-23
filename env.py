@@ -23,11 +23,6 @@ class DiscriminatorConfig(object):
         self.ob_horizon = ob_horizon
         self.weight = weight
 
-DiscriminatorProperty = namedtuple("DiscriminatorProperty",
-    "name key_links parent_link replay_speed ob_horizon id"
-)
-
-
 class Env(object):
     UP_AXIS = 2
     CHARACTER_MODEL = None
@@ -444,13 +439,7 @@ import numpy as np
 
 class ICCGANHumanoid(Env):
 
-    CHARACTER_MODEL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "humanoid.xml")
-    CONTROLLABLE_LINKS = ["torso", "head", 
-        "right_upper_arm", "right_lower_arm",
-        "left_upper_arm", "left_lower_arm", 
-        "right_thigh", "right_shin", "right_foot",
-        "left_thigh", "left_shin", "left_foot"]
-    DOFS =  [3, 3, 3, 1, 3, 1, 3, 1, 3, 3, 1, 3]
+    CHARACTER_MODEL = os.path.join("assets", "humanoid.xml")
     CONTACTABLE_LINKS = ["right_foot", "left_foot"]
     UP_AXIS = 2
 
@@ -469,8 +458,6 @@ class ICCGANHumanoid(Env):
         discriminators: Dict[str, DiscriminatorConfig],
     **kwargs):
         contactable_links = parse_kwarg(kwargs, "contactable_links", self.CONTACTABLE_LINKS)
-        controllable_links = parse_kwarg(kwargs, "controllable_links", self.CONTROLLABLE_LINKS)
-        dofs = parse_kwarg(kwargs, "dofs", self.DOFS)
         goal_reward_weight = parse_kwarg(kwargs, "goal_reward_weight", self.GOAL_REWARD_WEIGHT)
         self.enable_goal_timer = parse_kwarg(kwargs, "enable_goal_timer", self.ENABLE_GOAL_TIMER)
         self.goal_tensor_dim = parse_kwarg(kwargs, "goal_tensor_dim", self.GOAL_TENSOR_DIM)
@@ -482,16 +469,6 @@ class ICCGANHumanoid(Env):
         n_envs = len(self.envs)
         n_links = self.char_link_tensor.size(1)
         n_dofs = self.char_joint_tensor.size(1)
-
-        links = []
-        for link in controllable_links:
-            for actor in self.actors:
-                lid = self.gym.find_actor_rigid_body_handle(self.envs[0], actor, link)
-                if lid != -1:
-                    links.append(lid)
-                    break
-            assert lid != -1, "Unrecognized controllable link {}".format(link)
-        controllable_links = links
 
         if contactable_links is None:
             self.contactable_links = None
@@ -506,28 +483,6 @@ class ICCGANHumanoid(Env):
             self.contactable_links = torch.tensor(contact).to(self.contact_force_tensor.device)
         else:
             self.contactable_links = False
-
-        init_pose = motion_file
-        self.ref_motion = ReferenceMotion(motion_file=init_pose, character_model=self.character_model,
-            key_links=np.arange(n_links), controllable_links=controllable_links, dofs=dofs,
-            device=self.device
-        )
-
-        ref_motion = {init_pose: self.ref_motion}
-        disc_ref_motion = dict()
-        for id, config in discriminators.items():
-            m = init_pose if config.motion_file is None else config.motion_file
-            if m not in ref_motion:
-                ref_motion[m] = ReferenceMotion(motion_file=m, character_model=self.character_model,
-                    key_links=np.arange(n_links), controllable_links=controllable_links, dofs=dofs,
-                    device=self.device
-                )
-            key = (ref_motion[m], config.replay_speed)
-            if config.ob_horizon is None:
-                config.ob_horizon = self.ob_horizon+1
-            if key not in disc_ref_motion: disc_ref_motion[key] = [0, []]
-            disc_ref_motion[key][0] = max(disc_ref_motion[key][0], config.ob_horizon)
-            disc_ref_motion[key][1].append(id)
 
         if goal_reward_weight is not None:
             reward_weights = torch.empty((len(self.envs), self.rew_dim), dtype=torch.float32, device=self.device)
@@ -579,26 +534,23 @@ class ICCGANHumanoid(Env):
                     if parent_link != -1: break
             assert key_links is None or all(lid >= 0 for lid in key_links)
             assert parent_link is None or parent_link >= 0
+            config.parent_link = parent_link
+            config.key_links = key_links
             
-            self.discriminators[id] = DiscriminatorProperty(
-                name = id,
-                key_links = key_links,
-                parent_link = parent_link,
-                replay_speed = config.replay_speed,
-                ob_horizon = config.ob_horizon,
-                id=i
-            )
+            if config.motion_file is None:
+                config.motion_file = motion_file
+            if config.ob_horizon is None:
+                config.ob_horizon = self.ob_horizon+1
+            config.id = i
+            config.name = id
+            self.discriminators[id] = config
             if self.reward_weights is not None:
                 self.reward_weights[:, i] = config.weight
             max_ob_horizon = max(max_ob_horizon, config.ob_horizon)
 
         if max_ob_horizon != self.state_hist.size(0):
-            self.state_hist = torch.empty((max_ob_horizon, *self.state_hist.shape[1:]),
+            self.state_hist = torch.zeros((max_ob_horizon, *self.state_hist.shape[1:]),
                 dtype=self.root_tensor.dtype, device=self.device)
-        self.disc_ref_motion = [
-            (ref_motion, replay_speed, max_ob_horizon, [self.discriminators[id] for id in disc_ids])
-            for (ref_motion, replay_speed), (max_ob_horizon, disc_ids) in disc_ref_motion.items()
-        ]
 
         if self.rew_dim > 0:
             if self.rew_dim > 1:
@@ -616,6 +568,27 @@ class ICCGANHumanoid(Env):
             name: ob.size(-1)
             for name, ob in self.info["disc_obs"].items()
         }
+
+        init_pose = motion_file
+        disc_ref_motion = dict()
+        for id, config in discriminators.items():
+            m = init_pose if config.motion_file is None else config.motion_file
+            key = (m, config.replay_speed)
+            if config.ob_horizon is None:
+                config.ob_horizon = self.ob_horizon+1
+            if key not in disc_ref_motion: disc_ref_motion[key] = [0, []]
+            disc_ref_motion[key][0] = max(disc_ref_motion[key][0], config.ob_horizon)
+            disc_ref_motion[key][1].append(id)
+        self.disc_ref_motion = []
+        for (motion_file, replay_speed), (max_ob_horizon, disc_ids) in disc_ref_motion.items():
+            ref_motion = ReferenceMotion(motion_file=m, character_model=self.character_model,
+                key_links=None, device=self.device)
+            self.disc_ref_motion.append((ref_motion, replay_speed, max_ob_horizon, [self.discriminators[id] for id in disc_ids]))
+            if motion_file == init_pose and replay_speed is None:
+                self.ref_motion = ref_motion
+        if self.ref_motion is None:
+            self.ref_motion = ReferenceMotion(motion_file=init_pose, character_model=self.character_model,
+                key_links=None, device=self.device)
     
     def reset_done(self):
         obs, info = super().reset_done()
