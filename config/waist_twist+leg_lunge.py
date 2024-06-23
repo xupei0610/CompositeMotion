@@ -1,5 +1,3 @@
-import numpy as np
-
 env_cls = "ICCGANHumanoid"
 env_params = dict(
     episode_length = 300,

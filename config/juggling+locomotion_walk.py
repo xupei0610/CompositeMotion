@@ -1,5 +1,3 @@
-import numpy as np
-
 env_cls = "ICCGANHumanoidJugglingTarget"
 env_params = dict(
     episode_length = 500,

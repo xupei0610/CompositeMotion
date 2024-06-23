@@ -1,5 +1,3 @@
-import numpy as np
-
 env_cls = "ICCGANHumanoidTarget"
 env_params = dict(
     episode_length = 500,
@@ -27,7 +25,7 @@ discriminators = {
         motion_file = "assets/motions/gym/chest_open+walk_in_place.json",
         key_links = ["torso", "head", "right_upper_arm", "right_lower_arm", "right_hand", "left_upper_arm", "left_lower_arm", "left_hand"],
         parent_link = "pelvis",
-        replay_speed = lambda n: np.random.uniform(0.8, 1.2, size=(n,))
+        replay_speed = "lambda n: np.random.uniform(0.8, 1.2, size=(n,))"
     ),
     "walk/lower": dict(
         key_links = ["pelvis", "right_thigh", "right_shin", "right_foot", "left_thigh", "left_shin", "left_foot"],
