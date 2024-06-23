@@ -81,7 +81,7 @@ def train(env, model, ckpt_dir, training_params):
         s=[], a=[], v=[], lp=[], v_=[], not_done=[], terminate=[],
         ob_seq_len=[]
     )
-    multi_critics = env.reward_weights is not None
+    multi_critics = env.reward_weights is not None and env.reward_weights.size(-1) > 1
     if multi_critics:
         buffer["reward_weights"] = []
     has_goal_reward = env.rew_dim > 0
@@ -89,7 +89,7 @@ def train(env, model, ckpt_dir, training_params):
         buffer["r"] = []
 
     buffer_disc = {
-        name: dict(fake=[], real=[], seq_len=[]) for name in env.discriminators.keys()
+        name: dict(fake=[], real=[]) for name in env.discriminators.keys()
     }
     real_losses, fake_losses = {n:[] for n in buffer_disc.keys()}, {n:[] for n in buffer_disc.keys()}
     
@@ -120,7 +120,6 @@ def train(env, model, ckpt_dir, training_params):
             if env.discriminators:
                 fakes = info["disc_obs"]
                 reals = info["disc_obs_expert"]
-                disc_seq_len = info["disc_seq_len"]
 
             values_ = model.evaluate(obs_, seq_len)
 
@@ -140,35 +139,39 @@ def train(env, model, ckpt_dir, training_params):
             for name, fake in fakes.items():
                 buffer_disc[name]["fake"].append(fake)
                 buffer_disc[name]["real"].append(reals[name])
-                buffer_disc[name]["seq_len"].append(disc_seq_len[name])
 
         if len(buffer["s"]) == HORIZON:
             disc_data = []
+            ob_seq_lens = torch.cat(buffer["ob_seq_len"])
+            ob_seq_end_frames = ob_seq_lens - 1
             if env.discriminators:
                 with torch.no_grad():
                     for name, data in buffer_disc.items():
                         disc = model.discriminators[name]
                         fake = torch.cat(data["fake"])
-                        real = torch.cat(data["real"])
-                        seq_len = torch.cat(data["seq_len"])
-                        end_frame = seq_len - 1
+                        real_ = torch.cat(data["real"])
+                        end_frame = ob_seq_lens # N
 
                         length = torch.arange(fake.size(1), 
-                            dtype=end_frame.dtype, device=end_frame.device)
-                        mask = length.unsqueeze_(0) <= end_frame.unsqueeze(1)
+                            dtype=end_frame.dtype, device=end_frame.device
+                        ).unsqueeze_(0)         # 1 x L
+                        mask = length <= end_frame.unsqueeze(1)     # N x L
+                        mask_ = length >= fake.size(1)-1 - end_frame.unsqueeze(1)
+
+                        real = torch.zeros_like(real_)
+                        real[mask] = real_[mask_]
                         disc.ob_normalizer.update(fake[mask])
                         disc.ob_normalizer.update(real[mask])
-
-                        disc_data.append((name, disc, real, fake, end_frame))
+                        ob = disc.ob_normalizer(fake)
+                        ref = disc.ob_normalizer(real)
+                        disc_data.append((name, disc, ref, ob, end_frame))
 
                 model.train()
                 n_samples = 0
-                for name, disc, real, fake, seq_end_frame_ in disc_data:
+                for name, disc, ref, ob, seq_end_frame_ in disc_data:
                     real_loss = real_losses[name]
                     fake_loss = fake_losses[name]
                     opt = disc_optimizer[name]
-                    ref = disc.ob_normalizer(real)
-                    ob = disc.ob_normalizer(fake)
                     if len(ref) != n_samples:
                         n_samples = len(ref)
                         idx = torch.randperm(n_samples)
@@ -210,12 +213,12 @@ def train(env, model, ckpt_dir, training_params):
                 terminate = torch.cat(buffer["terminate"])
                 if multi_critics:
                     reward_weights = torch.cat(buffer["reward_weights"])
-                    rewards = torch.zeros_like(reward_weights)
+                    rewards = torch.empty_like(reward_weights)
                 else:
                     reward_weights = None
                     rewards = None
                 for name, disc, _, ob, seq_end_frame in disc_data:
-                    r = (disc(ob, seq_end_frame).clamp_(-1, 1)
+                    r = (disc(ob, seq_end_frame, normalize=False).clamp_(-1, 1)
                             .mean(-1, keepdim=True))
                     if rewards is None:
                         rewards = r

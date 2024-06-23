@@ -12,7 +12,7 @@ class DiscriminatorConfig(object):
     def __init__(self,
         key_links: Optional[List[str]]=None, ob_horizon: Optional[int]=None, 
         parent_link: Optional[str]=None, local_pos: Optional[bool]=None,
-        replay_speed: Optional[Callable]=None, motion_file: Optional[str]=None,
+        replay_speed: Optional[str]=None, motion_file: Optional[str]=None,
         weight:Optional[float]=None
     ):
         self.motion_file = motion_file
@@ -588,27 +588,19 @@ class ICCGANHumanoid(Env):
         else:
             self.disc_dim = {}
 
-        init_pose = motion_file
-        disc_ref_motion = dict()
-        for id, config in discriminators.items():
-            m = init_pose if config.motion_file is None else config.motion_file
-            key = (m, config.replay_speed)
-            if config.ob_horizon is None:
-                config.ob_horizon = self.ob_horizon+1
-            if key not in disc_ref_motion: disc_ref_motion[key] = [0, []]
-            disc_ref_motion[key][0] = max(disc_ref_motion[key][0], config.ob_horizon)
-            disc_ref_motion[key][1].append(id)
-        self.disc_ref_motion = []
-        for (motion_file, replay_speed), (max_ob_horizon, disc_ids) in disc_ref_motion.items():
-            ref_motion = ReferenceMotion(motion_file=m, character_model=self.character_model,
-                key_links=None, device=self.device)
-            self.disc_ref_motion.append((ref_motion, replay_speed, max_ob_horizon, [self.discriminators[id] for id in disc_ids]))
-            if motion_file == init_pose and replay_speed is None:
-                self.ref_motion = ref_motion
-        if self.ref_motion is None:
-            self.ref_motion = ReferenceMotion(motion_file=init_pose, character_model=self.character_model,
-                key_links=None, device=self.device)
-    
+        self.ref_motion = ReferenceMotion(motion_file=motion_file, character_model=self.character_model,
+            key_links=np.arange(n_links), device=self.device)
+        self.sampling_workers = []
+        self.real_samples = []
+
+    def __del__(self):
+        if hasattr(self, "sampling_workers"):
+            for p in self.sampling_workers:
+                p.terminate()
+            for p in self.sampling_workers:
+                p.join()
+        super().__del__()
+
     def reset_done(self):
         obs, info = super().reset_done()
         info["ob_seq_lens"] = self.ob_seq_lens
@@ -632,7 +624,7 @@ class ICCGANHumanoid(Env):
         obs, rews, dones, info = super().step(actions)
         if self.discriminators and self.training:
             info["disc_obs"] = self.observe_disc(self.state_hist)
-            info["disc_obs_expert"], info["disc_seq_len"] = self.fetch_real_samples()
+            info["disc_obs_expert"] = self.fetch_real_samples()
         return obs, rews, dones, info
 
     def overtime_check(self):
@@ -785,27 +777,70 @@ class ICCGANHumanoid(Env):
             return res, seq_len_
 
     def fetch_real_samples(self):
-        n_inst = len(self.envs)
+        if not self.real_samples:
+            if not self.sampling_workers:
+                self.disc_ref_motion = {}
+                import torch.multiprocessing as mp
+                mp.set_start_method("spawn")
+                manager = mp.Manager()
+                seed = np.random.get_state()[1][0]
+                for n, config in self.discriminators.items():
+                    q = manager.Queue(maxsize=1)
+                    self.disc_ref_motion[n] = q
+                    key_links = None if config.key_links is None else config.key_links
+                    if key_links is None or config.parent_link is None:
+                        parent_link_index = config.parent_link
+                        key_links_index = None
+                    else:
+                        if config.parent_link in key_links:
+                            key_links_index = None
+                        else:
+                            key_links_index = list(range(1, len(key_links)+1))
+                            key_links = [config.parent_link] + key_links
+                        parent_link_index = key_links.index(config.parent_link)
+                    p = mp.Process(target=self.__class__.ref_motion_sample, args=(q,
+                        seed+1+config.id, self.step_time, len(self.envs), config.ob_horizon, key_links_index, parent_link_index, config.local_pos, config.replay_speed,
+                        dict(motion_file=config.motion_file, character_model=self.character_model,
+                            key_links=key_links, device=self.device
+                        )
+                    ))
+                    p.start()
+                    self.sampling_workers.append(p)
 
-        samples = dict()
-        for ref_motion, replay_speed, ob_horizon, discs in self.disc_ref_motion:
-            dt = self.step_time
-            if replay_speed is not None:
-                dt /= replay_speed(n_inst)
-            motion_ids, motion_times0 = ref_motion.sample(n_inst, truncate_time=dt*(ob_horizon-1))
-            motion_ids = np.tile(motion_ids, ob_horizon)
-            motion_times = np.concatenate((motion_times0, *[motion_times0+dt*i for i in range(1, ob_horizon)]))
-            root_tensor, link_tensor, joint_tensor = ref_motion.state(motion_ids, motion_times)
-            real = torch.cat((
-                root_tensor, link_tensor.view(root_tensor.size(0), -1)
-            ), -1).view(ob_horizon, n_inst, -1)
+            self.real_samples = [{n: None for n in self.disc_ref_motion.keys()} for _ in range(128)]
+            for n, q in self.disc_ref_motion.items():
+                for i, v in enumerate(q.get()):
+                    self.real_samples[i][n] = v.to(self.device)
+        return self.real_samples.pop()
 
-            for d in discs: samples[d.name] = real
-        return self.observe_disc(samples)
+    @staticmethod
+    def ref_motion_sample(queue, seed, step_time, n_inst, ob_horizon, key_links, parent_link, local_pos, replay_speed, kwargs):
+        np.random.seed(seed)
+        torch.set_num_threads(1)
+        lib = ReferenceMotion(**kwargs)
+        if replay_speed is not None:
+            replay_speed = eval(replay_speed)
+        while True:
+            obs = []
+            for _ in range(128):
+                if replay_speed is None:
+                    dt = step_time
+                else:
+                    dt = step_time * replay_speed(n_inst)
+                motion_ids, motion_times0 = lib.sample(n_inst, truncate_time=dt*(ob_horizon-1))
+                motion_ids = np.tile(motion_ids, ob_horizon)
+                motion_times = np.concatenate((motion_times0, *[motion_times0+dt*i for i in range(1, ob_horizon)]))
+                root_tensor, link_tensor = lib.state(motion_ids, motion_times, with_joint_tensor=False)
+                samples = torch.cat((
+                    root_tensor, link_tensor.view(root_tensor.size(0), -1)
+                ), -1).view(ob_horizon, n_inst, -1)
+                ob = observe_iccgan(samples, None, key_links, parent_link, include_velocity=False, local_pos=local_pos)
+                obs.append(ob.cpu())
+            queue.put(obs)
 
 
 @torch.jit.script
-def observe_iccgan(state_hist: torch.Tensor, seq_len: torch.Tensor,
+def observe_iccgan(state_hist: torch.Tensor, seq_len: Optional[torch.Tensor]=None,
     key_links: Optional[List[int]]=None, parent_link: Optional[int]=None,
     include_velocity: bool=True, local_pos: Optional[bool]=None, ground_height:Optional[torch.Tensor]=None
 ):
@@ -871,6 +906,8 @@ def observe_iccgan(state_hist: torch.Tensor, seq_len: torch.Tensor,
     ob = ob.view(n_hist, n_inst, -1)                                    # L x N x (n_links x 7 or 13)
 
     ob1 = ob.permute(1, 0, 2)                                           # N x L x (n_links x 7 or 13)
+    if seq_len is None: return ob1
+
     ob2 = torch.zeros_like(ob1)
     arange = torch.arange(n_hist, dtype=seq_len.dtype, device=seq_len.device).unsqueeze_(0)
     seq_len_ = seq_len.unsqueeze(1)
