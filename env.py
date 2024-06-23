@@ -1,5 +1,4 @@
 from typing import Callable, Optional, Union, List, Dict, Any
-from collections import namedtuple
 import os
 from isaacgym import gymapi, gymtorch
 import torch
@@ -75,7 +74,15 @@ class Env(object):
         self.actor_ids_having_dofs = \
             n_actors_per_env * torch.arange(len(self.envs), dtype=torch.int32, device=self.device).unsqueeze(-1) + \
             torch.tensor(controllable_actors, dtype=torch.int32, device=self.device).unsqueeze(-2)
-        
+
+        self.root_tensor.fill_(0)
+        self.gym.set_actor_root_state_tensor(self.sim,
+            gymtorch.unwrap_tensor(self.root_tensor),
+        )
+        self.joint_tensor.fill_(0)
+        self.gym.set_dof_state_tensor(self.sim,
+            gymtorch.unwrap_tensor(self.joint_tensor),
+        )
         self.refresh_tensors()
         self.viewer_pause = False
         self.viewer_advance = False
@@ -610,7 +617,6 @@ class ICCGANHumanoid(Env):
         pass
     
     def step(self, actions):
-        self.state_hist[:-1] = self.state_hist[1:].clone()
         obs, rews, dones, info = super().step(actions)
         info["disc_obs"] = self.observe_disc(self.state_hist)
         info["disc_obs_expert"], info["disc_seq_len"] = self.fetch_real_samples()
@@ -630,7 +636,7 @@ class ICCGANHumanoid(Env):
         if self.contactable_links is not False:
             masked_contact[self.contactable_links] = 0          # N x n_links x 3
 
-        contacted = torch.any(masked_contact > 1., dim=-1)      # N x n_links
+        contacted = torch.any(masked_contact.abs_() > 1., dim=-1)      # N x n_links
 
         ground_height = self.ground_height(self.char_root_tensor[:, :3])
         if ground_height is not None:
@@ -719,12 +725,14 @@ class ICCGANHumanoid(Env):
         self.ob_seq_lens = self.lifetime+1 #(self.lifetime+1).clip(max=self.state_hist.size(0)-1)
         n_envs = len(self.envs)
         if env_ids is None or len(env_ids) == n_envs:
+            self.state_hist[:-1] = self.state_hist[1:].clone()
             self.state_hist[-1] = torch.cat((
                 self.char_root_tensor, self.char_link_tensor.view(n_envs, -1)
             ), -1)
             env_ids = None
         else:
             n_envs = len(env_ids)
+            self.state_hist[:-1, env_ids] = self.state_hist[1:, env_ids].clone()
             self.state_hist[-1, env_ids] = torch.cat((
                 self.char_root_tensor[env_ids], self.char_link_tensor[env_ids].view(n_envs, -1)
             ), -1)
