@@ -48,6 +48,7 @@ TRAINING_PARAMS = dict(
     disc_lr = 1e-5,
     max_epochs = 10000,
     save_interval = None,
+    log_interval = 50,
     terminate_reward = -1,
     control_mode="position"
 )
@@ -98,6 +99,7 @@ def train(env, model, ckpt_dir, training_params):
     GAMMA = training_params.gamma
     GAMMA_LAMBDA = training_params.gamma * training_params.lambda_
     OPT_EPOCHS = training_params.opt_epochs
+    LOG_INTERVAL = training_params.log_interval
 
     epoch = 0
     model.eval()
@@ -303,33 +305,34 @@ def train(env, model, ckpt_dir, training_params):
             for buf in buffer_disc.values():
                 for v in buf.values(): v.clear()
 
-            lifetime = env.lifetime.to(torch.float32).mean().item()
-            policy_loss, value_loss = np.mean(policy_loss), np.mean(value_loss)
-            if multi_critics:
-                rewards = rewards.view(*reward_weights.shape)
-                r = rewards.mean(0).cpu().tolist()
-                # reward_tot = (rewards * reward_weights).sum(-1, keepdims=True).mean(0).item()
-            else:
-                r = rewards.view(-1, rewards.size(-1)).mean(0).cpu().tolist()
-            if rewards_task is not None:
-                rewards_task = rewards_task.mean(0).cpu().tolist()
-            print("Epoch: {}, Loss: {:.4f}/{:.4f}, Reward: {}, Lifetime: {:.4f} -- {:.4f}s".format(
-                epoch, policy_loss, value_loss, "/".join(list(map("{:.4f}".format, r))), lifetime, time.time()-tic
-            ))
-            if logger is not None:
-                logger.add_scalar("train/lifetime", lifetime, epoch)
-                logger.add_scalar("train/reward", np.mean(r), epoch)
-                logger.add_scalar("train/loss_policy", policy_loss, epoch)
-                logger.add_scalar("train/loss_value", value_loss, epoch)
-                for name, r_loss in real_losses.items():
-                    if r_loss: logger.add_scalar("score_real/{}".format(name), sum(r_loss)/len(r_loss), epoch)
-                for name, f_loss in fake_losses.items():
-                    if f_loss: logger.add_scalar("score_fake/{}".format(name), sum(f_loss)/len(f_loss), epoch)
-                if rewards_task is not None: 
-                    for i in range(len(rewards_task)):
-                        logger.add_scalar("train/task_reward_{}".format(i), rewards_task[i], epoch)
-            for v in real_losses.values(): v.clear()
-            for v in fake_losses.values(): v.clear()
+            if epoch % LOG_INTERVAL == 1:
+                lifetime = env.lifetime.to(torch.float32).mean().item()
+                policy_loss, value_loss = np.mean(policy_loss), np.mean(value_loss)
+                if multi_critics:
+                    rewards = rewards.view(*reward_weights.shape)
+                    r = rewards.mean(0).cpu().tolist()
+                    # reward_tot = (rewards * reward_weights).sum(-1, keepdims=True).mean(0).item()
+                else:
+                    r = rewards.view(-1, rewards.size(-1)).mean(0).cpu().tolist()
+                if rewards_task is not None:
+                    rewards_task = rewards_task.mean(0).cpu().tolist()
+                print("Epoch: {}, Loss: {:.4f}/{:.4f}, Reward: {}, Lifetime: {:.4f} -- {:.4f}s".format(
+                    epoch, policy_loss, value_loss, "/".join(list(map("{:.4f}".format, r))), lifetime, time.time()-tic
+                ))
+                if logger is not None:
+                    logger.add_scalar("train/lifetime", lifetime, epoch)
+                    logger.add_scalar("train/reward", np.mean(r), epoch)
+                    logger.add_scalar("train/loss_policy", policy_loss, epoch)
+                    logger.add_scalar("train/loss_value", value_loss, epoch)
+                    for name, r_loss in real_losses.items():
+                        if r_loss: logger.add_scalar("score_real/{}".format(name), sum(r_loss)/len(r_loss), epoch)
+                    for name, f_loss in fake_losses.items():
+                        if f_loss: logger.add_scalar("score_fake/{}".format(name), sum(f_loss)/len(f_loss), epoch)
+                    if rewards_task is not None: 
+                        for i in range(len(rewards_task)):
+                            logger.add_scalar("train/task_reward_{}".format(i), rewards_task[i], epoch)
+                for v in real_losses.values(): v.clear()
+                for v in fake_losses.values(): v.clear()
             
             if ckpt_dir is not None:
                 state = None
