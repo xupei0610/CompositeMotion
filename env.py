@@ -11,12 +11,13 @@ def parse_kwarg(kwargs: dict, key: str, default_val: Any):
 class DiscriminatorConfig(object):
     def __init__(self,
         key_links: Optional[List[str]]=None, ob_horizon: Optional[int]=None, 
-        parent_link: Optional[str]=None,
+        parent_link: Optional[str]=None, local_pos: Optional[bool]=None,
         replay_speed: Optional[Callable]=None, motion_file: Optional[str]=None,
         weight:Optional[float]=None
     ):
         self.motion_file = motion_file
         self.key_links = key_links
+        self.local_pos = local_pos
         self.parent_link = parent_link
         self.replay_speed = replay_speed
         self.ob_horizon = ob_horizon
@@ -758,14 +759,16 @@ class ICCGANHumanoid(Env):
         if torch.is_tensor(state):
             # fake
             for id, disc in self.discriminators.items():
-                res[id] = observe_iccgan(state[-disc.ob_horizon:], seq_len, disc.key_links, disc.parent_link, include_velocity=False)
+                res[id] = observe_iccgan(state[-disc.ob_horizon:], seq_len, disc.key_links, disc.parent_link,
+                    include_velocity=False, local_pos=disc.local_pos)
             return res
         else:
             # real
             seq_len_ = dict()
             for disc_name, s in state.items():
                 disc = self.discriminators[disc_name]
-                res[disc_name] = observe_iccgan(s[-disc.ob_horizon:], seq_len, disc.key_links, disc.parent_link, include_velocity=False)
+                res[disc_name] = observe_iccgan(s[-disc.ob_horizon:], seq_len, disc.key_links, disc.parent_link,
+                    include_velocity=False, local_pos=disc.local_pos)
                 seq_len_[disc_name] = seq_len
             return res, seq_len_
 
@@ -792,7 +795,7 @@ class ICCGANHumanoid(Env):
 @torch.jit.script
 def observe_iccgan(state_hist: torch.Tensor, seq_len: torch.Tensor,
     key_links: Optional[List[int]]=None, parent_link: Optional[int]=None,
-    include_velocity: bool=True, ground_height:Optional[torch.Tensor]=None
+    include_velocity: bool=True, local_pos: Optional[bool]=None, ground_height:Optional[torch.Tensor]=None
 ):
     # state_hist: L x N x (1+N_links) x 13
 
@@ -808,27 +811,35 @@ def observe_iccgan(state_hist: torch.Tensor, seq_len: torch.Tensor,
         link_pos, link_orient = link_tensor[:,:,key_links,:3], link_tensor[:,:,key_links,3:7]
 
     if parent_link is None:
-        origin = root_tensor[-1,:, :3]              # N x 3
-        orient = root_tensor[-1,:,3:7]              # N x 4
+        if local_pos is True:
+            origin = root_tensor[:,:, :3]          # L x N x 3
+            orient = root_tensor[:,:,3:7]          # L x N x 4
+        else:
+            origin = root_tensor[-1,:, :3]          # N x 3
+            orient = root_tensor[-1,:,3:7]          # N x 4
 
-        heading = heading_zup(orient)               # N
+        heading = heading_zup(orient)               # (L x) N
         up_dir = torch.zeros_like(origin)
-        up_dir[..., UP_AXIS] = 1                    # N x 3
-        orient_inv = axang2quat(up_dir, -heading)   # N x 4
-        orient_inv = orient_inv.view(1, -1, 1, 4)   # 1 x N x 1 x 4
+        up_dir[..., UP_AXIS] = 1                    # (L x) N x 3
+        orient_inv = axang2quat(up_dir, -heading)   # (L x) N x 4
+        orient_inv = orient_inv.view(-1, n_inst, 1, 4)   # L x N x 1 x 4 or 1 x N x 1 x 4
 
         origin = origin.clone()
         if ground_height is None:
-            origin[..., UP_AXIS] = 0                # N x 3
+            origin[..., UP_AXIS] = 0                # (L x) N x 3
         else:
-            origin[..., UP_AXIS] = ground_height    # N x 3
-        origin.unsqueeze_(-2)                       # N x 1 x 3
+            origin[..., UP_AXIS] = ground_height    # (L x) N x 3
+        origin.unsqueeze_(-2)                       # (L x) N x 1 x 3
     else:
-        origin = link_tensor[:,:, parent_link, :3]  # L x N x 3
-        orient = link_tensor[:,:, parent_link,3:7]  # L x N x 4
+        if local_pos is True or local_pos is None:
+            origin = link_tensor[:,:, parent_link, :3]  # L x N x 3
+            orient = link_tensor[:,:, parent_link,3:7]  # L x N x 4
+        else:
+            origin = link_tensor[-1,:, parent_link, :3]  # N x 3
+            orient = link_tensor[-1,:, parent_link,3:7]  # N x 4
         orient_inv = quatconj(orient)               # L x N x 4
-        orient_inv.unsqueeze_(-2)                   # L x N x 1 x 4
-        origin = origin.unsqueeze(-2)               # L x N x 1 x 3
+        orient_inv = orient.view(-1, n_inst, 1, 4)  # L x N x 1 x 4 or 1 x N x 1 x 4
+        origin = origin.unsqueeze(-2)               # (L x) N x 1 x 3
 
     ob_link_pos = link_pos - origin                                     # L x N x n_links x 3 
     ob_link_pos = rotatepoint(orient_inv, ob_link_pos)
