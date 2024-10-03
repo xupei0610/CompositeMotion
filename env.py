@@ -61,11 +61,6 @@ class Env(object):
         self.sim = self.gym.create_sim(compute_device, graphics_device, gymapi.SIM_PHYSX, sim_params)
         self.add_ground()
         self.envs, self.actors = self.create_envs(n_envs)
-        self.setup_action_normalizer()
-        self.create_tensors()
-
-        self.gym.prepare_sim(self.sim)
-
         n_actors_per_env = self.gym.get_actor_count(self.envs[0])
         self.actor_ids = torch.arange(n_actors_per_env * len(self.envs), dtype=torch.int32, device=self.device).view(len(self.envs), -1)
         controllable_actors = []
@@ -75,15 +70,15 @@ class Env(object):
         self.actor_ids_having_dofs = \
             n_actors_per_env * torch.arange(len(self.envs), dtype=torch.int32, device=self.device).unsqueeze(-1) + \
             torch.tensor(controllable_actors, dtype=torch.int32, device=self.device).unsqueeze(-2)
+        self.setup_action_normalizer()
+        self.create_tensors()
+
+        self.gym.prepare_sim(self.sim)
 
         self.root_tensor.fill_(0)
-        self.gym.set_actor_root_state_tensor(self.sim,
-            gymtorch.unwrap_tensor(self.root_tensor),
-        )
+        self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_tensor))
         self.joint_tensor.fill_(0)
-        self.gym.set_dof_state_tensor(self.sim,
-            gymtorch.unwrap_tensor(self.joint_tensor),
-        )
+        self.gym.set_dof_state_tensor(self.sim, gymtorch.unwrap_tensor(self.joint_tensor))
         self.refresh_tensors()
         self.train()
         self.viewer_pause = False
@@ -981,6 +976,7 @@ class ICCGANHumanoidTarget(ICCGANHumanoid):
             ground_height = self.ground_height(self.state_hist[-1, :, :3])
             return observe_iccgan_target(
                 self.state_hist[-self.ob_horizon:], self.ob_seq_lens,
+                self.key_links, self.parent_link,
                 self.goal_tensor, self.goal_timer, sp_upper_bound=self.sp_upper_bound, fps=self.fps,
                 ground_height=ground_height
             )
@@ -988,6 +984,7 @@ class ICCGANHumanoidTarget(ICCGANHumanoid):
             ground_height = self.ground_height(self.state_hist[-1, env_ids, :3], env_ids)
             return observe_iccgan_target(
                 self.state_hist[-self.ob_horizon:][:, env_ids], self.ob_seq_lens[env_ids],
+                self.key_links, self.parent_link,
                 self.goal_tensor[env_ids], self.goal_timer[env_ids], sp_upper_bound=self.sp_upper_bound, fps=self.fps,
                 ground_height=ground_height
             )
@@ -1076,10 +1073,11 @@ class ICCGANHumanoidTarget(ICCGANHumanoid):
 
 @torch.jit.script
 def observe_iccgan_target(state_hist: torch.Tensor, seq_len: torch.Tensor,
+    key_links: Optional[List[int]], parent_link: Optional[int],
     target_tensor: torch.Tensor, timer: torch.Tensor,
     sp_upper_bound: float, fps: int, ground_height: Optional[torch.Tensor]=None
 ):
-    ob = observe_iccgan(state_hist, seq_len, ground_height=ground_height)
+    ob = observe_iccgan(state_hist, seq_len, key_links, parent_link, ground_height=ground_height)
 
     root_pos = state_hist[-1, :, :3]
     root_orient = state_hist[-1, :, 3:7]
@@ -1128,12 +1126,14 @@ class ICCGANHumanoidTargetAiming(ICCGANHumanoidTarget):
         if env_ids is None:
             return observe_iccgan_target_aiming(
                 self.state_hist[-self.ob_horizon:], self.ob_seq_lens,
+                self.key_links, self.parent_link,
                 self.goal_tensor, self.goal_timer,
                 sp_upper_bound=self.sp_upper_bound, goal_radius=self.goal_radius, fps=self.fps
             )
         else:
             return observe_iccgan_target_aiming(
                 self.state_hist[-self.ob_horizon:][:, env_ids], self.ob_seq_lens[env_ids],
+                self.key_links, self.parent_link,
                 self.goal_tensor[env_ids], self.goal_timer[env_ids],
                 sp_upper_bound=self.sp_upper_bound, goal_radius=self.goal_radius, fps=self.fps
             )
@@ -1252,6 +1252,7 @@ class ICCGANHumanoidTargetAiming(ICCGANHumanoidTarget):
 
 @torch.jit.script
 def observe_iccgan_target_aiming(state_hist: torch.Tensor, seq_len: torch.Tensor, 
+    key_links: Optional[List[int]], parent_link: Optional[int],
     goal_tensor: torch.Tensor, timer: torch.Tensor,
     sp_upper_bound: float, goal_radius: float, fps: int
 ):
@@ -1260,7 +1261,7 @@ def observe_iccgan_target_aiming(state_hist: torch.Tensor, seq_len: torch.Tensor
     target_tensor = goal_tensor[..., :3]
     aiming_tensor = goal_tensor[..., 3:]
 
-    target_ob = observe_iccgan_target(state_hist, seq_len, target_tensor, timer, sp_upper_bound=sp_upper_bound, fps=fps)
+    target_ob = observe_iccgan_target(state_hist, seq_len, key_links, parent_link, target_tensor, timer, sp_upper_bound=sp_upper_bound, fps=fps)
     
     root_pos = state_hist[-1, :, :3]
     root_orient = state_hist[-1, :, 3:7]
@@ -1613,6 +1614,7 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
         if env_ids is None:
             res = observe_iccgan_juggling_target(
                 self.state_hist[-self.ob_horizon:], self.ob_seq_lens,
+                self.key_links, self.parent_link,
                 self.goal_tensor, self.goal_timer,
                 self.sp_upper_bound, self.fps,
 
@@ -1624,6 +1626,7 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
         else:
             res = observe_iccgan_juggling_target(
                 self.state_hist[-self.ob_horizon:][:, env_ids], self.ob_seq_lens[env_ids],
+                self.key_links, self.parent_link,
                 self.goal_tensor[env_ids], self.goal_timer[env_ids],
                 self.sp_upper_bound, self.fps,
 
@@ -1639,6 +1642,7 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
 
 @torch.jit.script
 def observe_iccgan_juggling_target(state_hist: torch.Tensor, seq_len: torch.Tensor,
+    key_links: Optional[List[int]], parent_link: Optional[int],
     goal_tensor: torch.Tensor, goal_timer: torch.Tensor, sp_upper_bound: float, fps: int,
     target_ball_left: torch.Tensor, catched_left: torch.Tensor,
     target_ball_right: torch.Tensor, catched_right: torch.Tensor, 
@@ -1646,7 +1650,7 @@ def observe_iccgan_juggling_target(state_hist: torch.Tensor, seq_len: torch.Tens
     timer: torch.Tensor):
     UP_AXIS = 2
 
-    ob = observe_iccgan_target(state_hist, seq_len, goal_tensor, goal_timer, sp_upper_bound=sp_upper_bound, fps=fps)
+    ob = observe_iccgan_target(state_hist, seq_len, key_links, parent_link, goal_tensor, goal_timer, sp_upper_bound=sp_upper_bound, fps=fps)
 
     root_pos = state_hist[-1, :, :3]
     root_orient = state_hist[-1, :, 3:7]
