@@ -84,7 +84,7 @@ class Env(object):
         self.viewer_pause = False
         self.viewer_advance = False
         tar_env = len(self.envs)//4 + int(len(self.envs)**0.5)//2
-        base_pos = self.root_pos[tar_env].cpu()
+        base_pos = self.root_tensor[tar_env, 0, :3].cpu().detach()
         self.cam_target = gymapi.Vec3(*self.vector_up(1.0, [base_pos[0], base_pos[1], base_pos[2]]))
 
         self.simulation_step = 0
@@ -271,7 +271,7 @@ class Env(object):
         tar_env = len(self.envs)//4 + int(len(self.envs)**0.5)//2
         cam_trans = self.gym.get_viewer_camera_transform(self.viewer, self.envs[tar_env])
         dx, dy = cam_trans.p.x - self.cam_target.x, cam_trans.p.y - self.cam_target.y
-        base_pos = self.root_pos[tar_env].cpu()
+        base_pos = self.root_tensor[tar_env, 0, :3].cpu().detach()
         cam_pos = gymapi.Vec3(base_pos[0]+dx, base_pos[1]+dy, cam_trans.p.z)
         self.cam_target = gymapi.Vec3(base_pos[0], base_pos[1], 1.0)
         self.gym.viewer_camera_look_at(self.viewer, self.envs[tar_env], cam_pos, self.cam_target)
