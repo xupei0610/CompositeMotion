@@ -159,9 +159,15 @@ class Env(object):
     def ground_height(self, p, env_ids=None):
         return None
 
-    def add_actor(self, env, group):
+    def add_actor(self, env_handle: int, env_id: int, assets: Dict[str, int]):
         pass
 
+    def get_collision_filter(self, env_id: int, asset_id: int) -> int:
+        return -1
+    
+    def register_asset(self) -> Dict[str, int]:
+        return dict()
+    
     def create_envs(self, n: int, start_height: float=0.89,  actuate_all_dofs: bool=True, asset_options: Dict[str, Any]=dict()):
         if self.control_mode == "position":
             control_mode = gymapi.DOF_MODE_POS
@@ -173,7 +179,7 @@ class Env(object):
         envs, actors = [], []
         env_spacing = 3
 
-        actor_asset = []
+        actor_assets = []
         actuated_dof = []
         for character_model in self.character_model:
             asset_opt = gymapi.AssetOptions()
@@ -186,7 +192,7 @@ class Env(object):
                 os.path.abspath(os.path.dirname(character_model)),
                 os.path.basename(character_model),
                 asset_opt)
-            actor_asset.append(asset)
+            actor_assets.append(asset)
             if actuate_all_dofs:
                 actuated_dof.append([i for i in range(self.gym.get_asset_dof_count(asset))])
             else:
@@ -205,12 +211,19 @@ class Env(object):
         start_pose.p = gymapi.Vec3(*self.vector_up(start_height))
         start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
+        aux_assets = self.register_asset()
+
+        total_rigids = sum([self.gym.get_asset_rigid_body_count(asset) for asset in actor_assets] + \
+                           [self.gym.get_asset_rigid_body_count(asset) for asset in aux_assets.values()]) + 5
+        total_shapes = sum([self.gym.get_asset_rigid_shape_count(asset) for asset in actor_assets] + \
+                           [self.gym.get_asset_rigid_shape_count(asset) for asset in aux_assets.values()]) + 5
+        
         self.actuated_dof = []
-        for i in range(n):
+        for env_id in range(n):
             env = self.gym.create_env(self.sim, spacing_lower, spacing_upper, n_envs_per_row)
-            for aid, (asset, dofs) in enumerate(zip(actor_asset, actuated_dof)):
-                self.gym.begin_aggregate(env, self.gym.get_asset_rigid_body_count(asset), self.gym.get_asset_rigid_shape_count(asset), True)
-                actor = self.gym.create_actor(env, asset, start_pose, "actor{}_{}".format(i, aid), i, -1, 0)
+            self.gym.begin_aggregate(env, total_rigids, total_shapes, True)
+            for aid, (asset, dofs) in enumerate(zip(actor_assets, actuated_dof)):
+                actor = self.gym.create_actor(env, asset, start_pose, "actor{}_{}".format(env_id, aid), env_id, self.get_collision_filter(env_id, aid), 0)
                 dof_prop = self.gym.get_asset_dof_properties(asset)
                 for k in range(len(dof_prop)):
                     if k in dofs:
@@ -220,17 +233,18 @@ class Env(object):
                         dof_prop[k]["damping"] = 0
                 self.gym.set_actor_dof_properties(env, actor, dof_prop)
                 self.gym.end_aggregate(env)
-                if i == n-1:
+                if env_id == n-1:
                     actors.append(actor)
                     self.actuated_dof.append(dofs)
-            self.add_actor(env, i)
+            self.add_actor(env, env_id, aux_assets)
+            self.gym.end_aggregate(env)
             envs.append(env)
         return envs, actors
 
     def render(self):
         tar_env = len(self.envs)//4 + int(len(self.envs)**0.5)//2
         self.viewer = self.gym.create_viewer(self.sim, gymapi.CameraProperties())
-        base_pos = self.root_pos[tar_env].cpu()
+        base_pos = self.root_tensor[tar_env, 0, :3].cpu().detach()
         cam_pos = gymapi.Vec3(*self.vector_up(self.camera_pos[2], 
             [base_pos[0]+self.camera_pos[0], base_pos[1]+self.camera_pos[1], base_pos[2]+self.camera_pos[1]]))
         self.gym.viewer_camera_look_at(self.viewer, self.envs[tar_env], cam_pos, self.cam_target)
