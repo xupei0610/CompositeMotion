@@ -60,7 +60,7 @@ class Env(object):
         self.gym = gymapi.acquire_gym()
         self.sim = self.gym.create_sim(compute_device, graphics_device, gymapi.SIM_PHYSX, sim_params)
         self.add_ground()
-        self.envs, self.actors = self.create_envs(n_envs)
+        self.envs, self.actors, self.actuated_dofs = self.create_envs(n_envs)
         n_actors_per_env = self.gym.get_actor_count(self.envs[0])
         self.actor_ids = torch.arange(n_actors_per_env * len(self.envs), dtype=torch.int32, device=self.device).view(len(self.envs), -1)
         controllable_actors = []
@@ -180,7 +180,7 @@ class Env(object):
         env_spacing = 3
 
         actor_assets = []
-        actuated_dof = []
+        controllable_dofs = []
         for character_model in self.character_model:
             asset_opt = gymapi.AssetOptions()
             asset_opt.angular_damping = 0.01
@@ -194,7 +194,7 @@ class Env(object):
                 asset_opt)
             actor_assets.append(asset)
             if actuate_all_dofs:
-                actuated_dof.append([i for i in range(self.gym.get_asset_dof_count(asset))])
+                controllable_dofs.append([i for i in range(self.gym.get_asset_dof_count(asset))])
             else:
                 actuators = []
                 for i in range(self.gym.get_asset_actuator_count(asset)):
@@ -202,7 +202,7 @@ class Env(object):
                     actuators.append(self.gym.find_asset_dof_index(asset, name))
                     if actuators[-1] == -1:
                         raise ValueError("Failed to find joint with name {}".format(name))
-                actuated_dof.append(sorted(actuators) if len(actuators) else [])
+                controllable_dofs.append(sorted(actuators) if len(actuators) else [])
 
         spacing_lower = gymapi.Vec3(-env_spacing, -env_spacing, 0)
         spacing_upper = gymapi.Vec3(env_spacing, env_spacing, env_spacing)
@@ -218,28 +218,28 @@ class Env(object):
         total_shapes = sum([self.gym.get_asset_rigid_shape_count(asset) for asset in actor_assets] + \
                            [self.gym.get_asset_rigid_shape_count(asset) for asset in aux_assets.values()]) + 5
         
-        self.actuated_dof = []
+        actuated_dofs = []
         for env_id in range(n):
             env = self.gym.create_env(self.sim, spacing_lower, spacing_upper, n_envs_per_row)
             self.gym.begin_aggregate(env, total_rigids, total_shapes, True)
-            for aid, (asset, dofs) in enumerate(zip(actor_assets, actuated_dof)):
+            for aid, (asset, dofs) in enumerate(zip(actor_assets, controllable_dofs)):
                 actor = self.gym.create_actor(env, asset, start_pose, "actor{}_{}".format(env_id, aid), env_id, self.get_collision_filter(env_id, aid), 0)
                 dof_prop = self.gym.get_asset_dof_properties(asset)
                 for k in range(len(dof_prop)):
                     if k in dofs:
                         dof_prop[k]["driveMode"] = control_mode
                     else:
+                        dof_prop[k]["driveMode"] = gymapi.DOF_MODE_NONE
                         dof_prop[k]["stiffness"] = 0
                         dof_prop[k]["damping"] = 0
                 self.gym.set_actor_dof_properties(env, actor, dof_prop)
-                self.gym.end_aggregate(env)
                 if env_id == n-1:
                     actors.append(actor)
-                    self.actuated_dof.append(dofs)
+                    actuated_dofs.append(dofs)
             self.add_actor(env, env_id, aux_assets)
             self.gym.end_aggregate(env)
             envs.append(env)
-        return envs, actors
+        return envs, actors, actuated_dofs
 
     def render(self):
         tar_env = len(self.envs)//4 + int(len(self.envs)**0.5)//2
@@ -301,7 +301,7 @@ class Env(object):
         contact_force_tensor = gymtorch.wrap_tensor(contact_force_tensor)
         self.contact_force_tensor = contact_force_tensor.view(len(self.envs), -1, 3)
 
-        if self.actuated_dof.size(-1) == self.joint_tensor.size(1):
+        if self.actuated_dofs.size(-1) == self.joint_tensor.size(1):
             self.action_tensor = None
         else:
             self.action_tensor = torch.zeros_like(self.joint_tensor[..., 0])
@@ -311,7 +311,7 @@ class Env(object):
         dof_cnts = 0
         action_lower, action_upper = [], []
         action_scale = []
-        for i, dofs in zip(range(self.gym.get_actor_count(self.envs[0])), self.actuated_dof):
+        for i, dofs in zip(range(self.gym.get_actor_count(self.envs[0])), self.actuated_dofs):
             actor = self.gym.get_actor_handle(self.envs[0], i)
             dof_prop = self.gym.get_actor_dof_properties(self.envs[0], actor)
             if len(dof_prop) < 1: continue
@@ -330,13 +330,13 @@ class Env(object):
         action_scale *= 0.5 * np.subtract(action_upper, action_lower)
         self.action_offset = torch.tensor(action_offset, dtype=torch.float32, device=self.device)
         self.action_scale = torch.tensor(action_scale, dtype=torch.float32, device=self.device)
-        self.actuated_dof = torch.tensor(actuated_dof, dtype=torch.int64, device=self.device)
+        self.actuated_dofs = torch.tensor(actuated_dof, dtype=torch.int64, device=self.device)
 
     def process_actions(self, actions):
         a = actions*self.action_scale + self.action_offset
         if self.action_tensor is None:
             return a
-        self.action_tensor[:, self.actuated_dof] = a
+        self.action_tensor[:, self.actuated_dofs] = a
         return self.action_tensor
 
     def reset(self):
@@ -370,7 +370,7 @@ class Env(object):
         if self.action_tensor is None:
             self.joint_tensor[env_ids] = ref_joint_tensor
         else:
-            self.joint_tensor[env_ids.unsqueeze(-1), self.actuated_dof] = ref_joint_tensor
+            self.joint_tensor[env_ids.unsqueeze(-1), self.actuated_dofs] = ref_joint_tensor
 
         actor_ids = self.actor_ids[env_ids].flatten()
         n_actor_ids = len(actor_ids)
@@ -503,6 +503,7 @@ class ICCGANHumanoid(Env):
                     lid = self.gym.find_actor_rigid_body_handle(self.envs[0], actor, link)
                     if lid >= 0:
                         contact[:, lid] = True
+                        break
                 assert lid >= 0, "Unrecognized contactable link {}".format(link)
             self.contactable_links = torch.tensor(contact).to(self.contact_force_tensor.device)
         else:
@@ -517,7 +518,7 @@ class ICCGANHumanoid(Env):
                 reward_weights[:, i] = w
         elif self.rew_dim:
             goal_reward_weight = []
-            assert(self.rew_dim == len(goal_reward_weight))
+            assert self.rew_dim == len(goal_reward_weight), "{} vs {}".format(self.rew_dim, len(goal_reward_weight)) 
 
         n_comp = len(discriminators) + self.rew_dim
         if n_comp > 1:
@@ -548,7 +549,7 @@ class ICCGANHumanoid(Env):
                         if lid != -1:
                             key_links.append(lid)
                             break
-                    assert lid != -1, "Unfound link {}".format(link)
+                    assert lid != -1, "Unrecognized key link {}".format(link)
                 key_links = sorted(key_links)
             if config.parent_link is None:
                 parent_link = None
@@ -556,6 +557,7 @@ class ICCGANHumanoid(Env):
                 for j in self.actors:
                     parent_link = self.gym.find_actor_rigid_body_handle(self.envs[0], j, config.parent_link)
                     if parent_link != -1: break
+                assert parent_link != -1, "Unrecognized parent link {}".format(parent_link)
             assert key_links is None or all(lid >= 0 for lid in key_links)
             assert parent_link is None or parent_link >= 0
             config.parent_link = parent_link
