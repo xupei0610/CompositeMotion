@@ -503,7 +503,7 @@ class ICCGANHumanoid(Env):
                     lid = self.gym.find_actor_rigid_body_handle(self.envs[0], actor, link)
                     if lid >= 0:
                         contact[:, lid] = True
-                        break
+                        # break
                 assert lid >= 0, "Unrecognized contactable link {}".format(link)
             self.contactable_links = torch.tensor(contact).to(self.contact_force_tensor.device)
         else:
@@ -599,10 +599,14 @@ class ICCGANHumanoid(Env):
         else:
             self.disc_dim = {}
 
-        self.ref_motion = ReferenceMotion(motion_file=motion_file, character_model=self.character_model,
-            key_links=np.arange(n_links), device=self.device)
+        self.ref_motion = self.build_motion_lib(motion_file)
         self.sampling_workers = []
         self.real_samples = []
+
+    def build_motion_lib(self, motion_file):
+        n_links = self.char_link_tensor.size(1)
+        return ReferenceMotion(motion_file=motion_file, character_model=self.character_model,
+            key_links=np.arange(n_links), device=self.device)
 
     def __del__(self):
         if hasattr(self, "sampling_workers"):
@@ -667,14 +671,13 @@ class ICCGANHumanoid(Env):
 
     def init_state(self, env_ids):
         motion_ids, motion_times = self.ref_motion.sample(len(env_ids))
-        ref_root_tensor, ref_link_tensor, ref_joint_tensor = self.ref_motion.state(motion_ids, motion_times)
+        ref_link_tensor, ref_joint_tensor = self.ref_motion.state(motion_ids, motion_times)
 
-        ground_height = self.ground_height(ref_root_tensor[:, :3], env_ids)
+        ground_height = self.ground_height(ref_link_tensor[:, 0, :3], env_ids)
         if ground_height is not None:
-            ref_root_tensor[:, 2] += ground_height
             ref_link_tensor[:, :, 2] += ground_height.unsqueeze_(1)
 
-        return ref_root_tensor, ref_link_tensor, ref_joint_tensor
+        return ref_link_tensor[:,0], ref_link_tensor, ref_joint_tensor
     
     def create_tensors(self):
         super().create_tensors()
@@ -700,7 +703,7 @@ class ICCGANHumanoid(Env):
         
         self.char_contact_force_tensor = self.contact_force_tensor[:, :n_links]
     
-        self.state_hist = torch.empty((self.ob_horizon+1, len(self.envs), 13 + n_links*13),
+        self.state_hist = torch.empty((self.ob_horizon+1, len(self.envs), n_links*13),
             dtype=self.root_tensor.dtype, device=self.device)
 
         if self.key_links is None:
@@ -742,16 +745,12 @@ class ICCGANHumanoid(Env):
         n_envs = len(self.envs)
         if env_ids is None or len(env_ids) == n_envs:
             self.state_hist[:-1] = self.state_hist[1:].clone()
-            self.state_hist[-1] = torch.cat((
-                self.char_root_tensor, self.char_link_tensor.view(n_envs, -1)
-            ), -1)
+            self.state_hist[-1] = self.char_link_tensor.view(n_envs, -1)
             env_ids = None
         else:
             n_envs = len(env_ids)
             self.state_hist[:-1, env_ids] = self.state_hist[1:, env_ids].clone()
-            self.state_hist[-1, env_ids] = torch.cat((
-                self.char_root_tensor[env_ids], self.char_link_tensor[env_ids].view(n_envs, -1)
-            ), -1)
+            self.state_hist[-1, env_ids] = self.char_link_tensor[env_ids].view(n_envs, -1)
         return self._observe(env_ids)
     
     def _observe(self, env_ids):
@@ -799,9 +798,17 @@ class ICCGANHumanoid(Env):
                     q = manager.Queue(maxsize=1)
                     self.disc_ref_motion[n] = q
                     key_links = None if config.key_links is None else config.key_links
-                    if key_links is None or config.parent_link is None:
+                    if key_links is None:  # all links are key links and observable
                         parent_link_index = config.parent_link
                         key_links_index = None
+                    elif config.parent_link is None: # parent link is the root, ensure it appears as the first in the key link list
+                        parent_link_index = None
+                        if 0 in key_links:
+                            key_links = [0] + [_ for _ in key_links if _ != 0] # root link is the first key links
+                            key_links_index = None # all links in the key link list are key links for observation
+                        else:
+                            key_links = [0] + key_links # the root link in the key link list but not for observation
+                            key_links_index = list(range(1, len(key_links)+1))
                     else:
                         if config.parent_link in key_links:
                             key_links_index = None
@@ -841,10 +848,8 @@ class ICCGANHumanoid(Env):
                 motion_ids, motion_times0 = lib.sample(n_inst, truncate_time=dt*(ob_horizon-1))
                 motion_ids = np.tile(motion_ids, ob_horizon)
                 motion_times = np.concatenate((motion_times0, *[motion_times0+dt*i for i in range(1, ob_horizon)]))
-                root_tensor, link_tensor = lib.state(motion_ids, motion_times, with_joint_tensor=False)
-                samples = torch.cat((
-                    root_tensor, link_tensor.view(root_tensor.size(0), -1)
-                ), -1).view(ob_horizon, n_inst, -1)
+                link_tensor = lib.state(motion_ids, motion_times, with_joint_tensor=False)
+                samples = link_tensor.view(ob_horizon, n_inst, -1)
                 ob = observe_iccgan(samples, None, key_links, parent_link, include_velocity=False, local_pos=local_pos)
                 obs.append(ob.cpu())
             queue.put(obs)
@@ -861,14 +866,14 @@ def observe_iccgan(state_hist: torch.Tensor, seq_len: Optional[torch.Tensor]=Non
     n_hist = state_hist.size(0)
     n_inst = state_hist.size(1)
 
-    root_tensor = state_hist[..., :13]
-    link_tensor = state_hist[...,13:].view(n_hist, n_inst, -1, 13)
+    link_tensor = state_hist.view(n_hist, n_inst, -1, 13)
     if key_links is None:
         link_pos, link_orient = link_tensor[...,:3], link_tensor[...,3:7]
     else:
         link_pos, link_orient = link_tensor[:,:,key_links,:3], link_tensor[:,:,key_links,3:7]
 
     if parent_link is None:
+        root_tensor = state_hist[..., :13]
         if local_pos is True:
             origin = root_tensor[:,:, :3]          # L x N x 3
             orient = root_tensor[:,:,3:7]          # L x N x 4
