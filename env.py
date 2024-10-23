@@ -372,21 +372,12 @@ class Env(object):
         else:
             self.joint_tensor[env_ids.unsqueeze(-1), self.actuated_dofs] = ref_joint_tensor
 
-        actor_ids = self.actor_ids[env_ids].flatten()
-        n_actor_ids = len(actor_ids)
-        actor_ids = gymtorch.unwrap_tensor(actor_ids)
-        self.gym.set_actor_root_state_tensor_indexed(self.sim,
-            gymtorch.unwrap_tensor(self.root_tensor),
-            actor_ids, n_actor_ids
+        self.gym.set_actor_root_state_tensor(self.sim,
+            gymtorch.unwrap_tensor(self.root_tensor)
         )
-        actor_ids = self.actor_ids_having_dofs[env_ids].flatten()
-        n_actor_ids = len(actor_ids)
-        actor_ids = gymtorch.unwrap_tensor(actor_ids)
-        self.gym.set_dof_state_tensor_indexed(self.sim,
-            gymtorch.unwrap_tensor(self.joint_tensor),
-            actor_ids, n_actor_ids
+        self.gym.set_dof_state_tensor(self.sim,
+            gymtorch.unwrap_tensor(self.joint_tensor)
         )
-
         self.lifetime[env_ids] = 0
 
     def do_simulation(self):
@@ -1570,10 +1561,8 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
         )
 
         self.ball_root_tensor.copy_(self.link_tensor[(self.env_range_, self.ball_attach)])
-        actor_ids = self.actor_ids[:, 1:].flatten().contiguous()
-        self.gym.set_actor_root_state_tensor_indexed(self.sim,
-            gymtorch.unwrap_tensor(self.root_tensor),
-            gymtorch.unwrap_tensor(actor_ids), len(actor_ids)
+        self.gym.set_actor_root_state_tensor(self.sim,
+            gymtorch.unwrap_tensor(self.root_tensor)
         )
         self.target_ball_release[release] += 1
 
