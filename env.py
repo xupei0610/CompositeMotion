@@ -1341,7 +1341,7 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
             self.ball_properties.update(kwargs["ball_properties"])
         super().__init__(*args, **kwargs)
     
-    def create_envs(self, n: int):
+    def register_asset(self) -> Dict[str, int]:
         ball_asset_options = gymapi.AssetOptions()
         ball_asset_options.density = self.ball_mass / (4*np.pi*(self.ball_radius**3)/3)
         ball_asset = self.gym.create_sphere(self.sim, self.ball_radius, ball_asset_options)
@@ -1349,14 +1349,13 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
         for k, v in self.BALL_PROPERTIES.items():
             setattr(props[0], k, v)
         self.gym.set_asset_rigid_shape_properties(ball_asset, props)
+        return {"ball": ball_asset}
+    
+    def add_actor(self, env, group, aux_assets):
         ball_pose = gymapi.Transform()
         ball_pose.p = gymapi.Vec3(0.0, 5.0, 0.0)
         ball_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
-        self.ball_asset = ball_asset
-        self.ball_init_pose = ball_pose
-        return super().create_envs(n)
-
-    def add_actor(self, env, group):
+        ball_asset = aux_assets["ball"]
         self.left_hand_link = self.gym.find_actor_rigid_body_handle(env, 0, "left_hand")
         self.right_hand_link = self.gym.find_actor_rigid_body_handle(env, 0, "right_hand")
         left_lower_arm_link = self.gym.find_actor_rigid_body_handle(env, 0, "left_lower_arm")
@@ -1370,7 +1369,7 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
         rb_shape_props[rb_shape[right_lower_arm_link].start].filter = collison_mask
         self.gym.set_actor_rigid_shape_properties(env, 0, rb_shape_props)
         for k in range(1, self.n_balls+1):
-            self.gym.create_actor(env, self.ball_asset, self.ball_init_pose, "ball", group, -1, 0)
+            self.gym.create_actor(env, ball_asset, ball_pose, "ball", group, -1, 0)
             r, g, b = (k//4)%2, (k//2)%2, k%2
             self.gym.set_rigid_body_color(env, k, 0, gymapi.MESH_VISUAL_AND_COLLISION, gymapi.Vec3(r, g, b))
             rb_shape_props = self.gym.get_actor_rigid_shape_properties(env, k)
