@@ -360,12 +360,7 @@ class Env(object):
     def reset_envs(self, env_ids):
         ref_root_tensor, ref_link_tensor, ref_joint_tensor = self.init_state(env_ids)
 
-        if ref_root_tensor.ndim == 2 or ref_root_tensor.size(1) != self.root_tensor.size(1):
-            self.root_tensor[env_ids] = ref_root_tensor.unsqueeze_(1)
-        if ref_root_tensor.size(1) == self.root_tensor.size(1):
-            self.root_tensor[env_ids] = ref_root_tensor
-        else:
-            self.root_tensor[env_ids] = ref_root_tensor.repeat(1, self.root_tensor.size(1), 1)
+        self.root_tensor[env_ids] = ref_root_tensor
         self.link_tensor[env_ids] = ref_link_tensor
         if self.action_tensor is None:
             self.joint_tensor[env_ids] = ref_joint_tensor
@@ -590,14 +585,16 @@ class ICCGANHumanoid(Env):
         else:
             self.disc_dim = {}
 
-        self.ref_motion = self.build_motion_lib(motion_file)
+        self.ref_motion, self.root_links = self.build_motion_lib(motion_file)
         self.sampling_workers = []
         self.real_samples = []
 
     def build_motion_lib(self, motion_file):
         n_links = self.char_link_tensor.size(1)
-        return ReferenceMotion(motion_file=motion_file, character_model=self.character_model,
+        ref_motion = ReferenceMotion(motion_file=motion_file, character_model=self.character_model,
             key_links=np.arange(n_links), device=self.device)
+        root_links = [i for i, p in enumerate(ref_motion.skeleton.parents) if p == -1]
+        return ref_motion, root_links
 
     def __del__(self):
         if hasattr(self, "sampling_workers"):
@@ -668,7 +665,7 @@ class ICCGANHumanoid(Env):
         if ground_height is not None:
             ref_link_tensor[:, :, 2] += ground_height.unsqueeze_(1)
 
-        return ref_link_tensor[:,0], ref_link_tensor, ref_joint_tensor
+        return ref_link_tensor[:, self.root_links], ref_link_tensor, ref_joint_tensor
     
     def create_tensors(self):
         super().create_tensors()
@@ -1439,7 +1436,7 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
         self.miss_left[env_ids] = False
         self.miss_right[env_ids] = False
 
-        ref_root_tensor = torch.cat((ref_root_tensor.unsqueeze_(1), ball_root_tensor), 1)
+        ref_root_tensor = torch.cat((ref_root_tensor, ball_root_tensor), 1)
         ref_link_tensor = torch.cat((ref_link_tensor, ball_root_tensor), 1)
         return ref_root_tensor, ref_link_tensor, ref_joint_tensor
 
