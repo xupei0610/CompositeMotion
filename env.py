@@ -491,7 +491,7 @@ class ICCGANHumanoid(Env):
                     if lid >= 0:
                         contact[:, lid] = True
                         lids.append(lid)
-                assert len(lids) >= 0, "Unrecognized contactable link {}".format(link)
+                assert len(lids) > 0, "Unrecognized contactable link {}".format(link)
             self.contactable_links = torch.tensor(contact).to(self.contact_force_tensor.device)
         else:
             self.contactable_links = False
