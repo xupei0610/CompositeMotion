@@ -19,7 +19,7 @@ Motion = namedtuple("Motion",
 )
 
 import xml.etree.ElementTree as XMLParser
-def load_mjcf(filename: str):
+def load_mjcf(filename: Union[str, Sequence[str]]):
     if type(filename) == str:
         filename = [filename]
     
@@ -139,7 +139,7 @@ def compute_motion(fps:int, skeleton: Skeleton, local_q, local_p):
 
 class ReferenceMotion():
     def __init__(self, motion_file: Union[str, Sequence[str]],
-        character_model: str, 
+        character_model: Union[str, Sequence[str]], 
         key_links: Sequence[int],
         device: torch.device
     ):
