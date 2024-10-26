@@ -151,18 +151,18 @@ class ReferenceMotion():
         self.motion_dt = []
         self.motion_n_frames = []
 
-        skeleton = load_mjcf(character_model)
-        self.dofs = [idx for _, __, idx in skeleton.dofs]
+        self.skeleton = load_mjcf(character_model)
+        self.dofs = [idx for _, __, idx in self.skeleton.dofs]
         if key_links is None:
-            key_links = list(np.arange(len(skeleton.nodes)))
-        controllable_links = sorted(list(set([idx for _, idx, __  in skeleton.dofs])))
+            key_links = list(np.arange(len(self.skeleton.nodes)))
+        controllable_links = sorted(list(set([idx for _, idx, __  in self.skeleton.dofs])))
         self.n_key_links = len(key_links)
         self.n_controllable_links = len(controllable_links)
         if type(motion_file) == str:
-            self.load_motions(motion_file, skeleton, controllable_links, key_links)
+            self.load_motions(motion_file, self.skeleton, controllable_links, key_links)
         else:
             for m in motion_file:
-                self.load_motions(m, skeleton, controllable_links, key_links)
+                self.load_motions(m, self.skeleton, controllable_links, key_links)
             self.motion_weight = np.array(self.motion_weight)
 
     def load_motions(self, motion_file, skeleton, controllable_links, key_links):
@@ -285,7 +285,8 @@ class ReferenceMotion():
         motion_ids = np.random.choice(len(self.motion), size=n, p=self.motion_weight, replace=True)
         phase = np.random.uniform(low=0.0, high=1.0, size=motion_ids.shape)
         motion_len = self.motion_length[motion_ids]
-        if (truncate_time is not None): motion_len -= truncate_time
+        if truncate_time is not None:
+            motion_len = np.clip(motion_len - truncate_time, min=0)
         motion_time = phase * motion_len
         return motion_ids, motion_time
 
