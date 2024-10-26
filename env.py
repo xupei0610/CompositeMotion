@@ -485,12 +485,13 @@ class ICCGANHumanoid(Env):
         elif contactable_links:
             contact = np.zeros((n_envs, n_links), dtype=bool)
             for link in contactable_links:
+                lids = []
                 for actor in self.actors:
                     lid = self.gym.find_actor_rigid_body_handle(self.envs[0], actor, link)
                     if lid >= 0:
                         contact[:, lid] = True
-                        # break
-                assert lid >= 0, "Unrecognized contactable link {}".format(link)
+                        lids.append(lid)
+                assert len(lids) >= 0, "Unrecognized contactable link {}".format(link)
             self.contactable_links = torch.tensor(contact).to(self.contact_force_tensor.device)
         else:
             self.contactable_links = False
