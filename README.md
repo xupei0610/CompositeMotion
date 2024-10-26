@@ -21,6 +21,18 @@ We also refer to the extended implementation
 [[code](https://github.com/xupei0610/AdaptNet)]
 ([SIGGRAPH Asia'23](https://asia.siggraph.org/2023/presentation/?id=papers_543&sess=sess120), [TOG](https://dl.acm.org/doi/10.1145/3618375))
 
+- _*Synchronize Dual Hands for Physics-Based Dexterous Guitar Playing*_
+[[arXiv](https://arxiv.org/abs/2409.16629)]
+[[Youtube](https://www.youtube.com/watch?v=r_y0P2pIeF8&list=PLLfEynalFz6j0X5Kiut0U3GLRxt3Oz_oa)]
+[[webpage](https://pei-xu.github.io/guitar)]
+[[code](https://github.com/xupei0610/guitar)]
+([SIGGRAPH Asia'24](https://asia.siggraph.org/2024/presentation/?id=papers_1155&sess=sess150))
+
+- _*FürElise: Capturing and Physically Synthesizing Hand Motion of Piano Performance*_
+[[arXiv](https://arxiv.org/abs/2410.05791)]
+[[webpage](https://for-elise.github.io/)]
+([SIGGRAPH Asia'24](https://asia.siggraph.org/2024/presentation/?id=papers_1250&sess=sess129))
+
 
 ![](doc/teaser_tennis.png)
 
