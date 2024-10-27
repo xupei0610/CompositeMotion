@@ -286,7 +286,7 @@ class ReferenceMotion():
         phase = np.random.uniform(low=0.0, high=1.0, size=motion_ids.shape)
         motion_len = self.motion_length[motion_ids]
         if truncate_time is not None:
-            motion_len = np.clip(motion_len - truncate_time, min=0)
+            motion_len = np.maximum(motion_len - truncate_time, 0)
         motion_time = phase * motion_len
         return motion_ids, motion_time
 
