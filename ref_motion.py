@@ -1,4 +1,4 @@
-from typing import Sequence, Union
+from typing import Optional, Sequence, Union
 import os
 import torch
 import numpy as np
@@ -140,8 +140,8 @@ def compute_motion(fps:int, skeleton: Skeleton, local_q, local_p):
 class ReferenceMotion():
     def __init__(self, motion_file: Union[str, Sequence[str]],
         character_model: Union[str, Sequence[str]], 
-        key_links: Sequence[int],
-        device: torch.device
+        key_links: Optional[Sequence[int]]=None, 
+        device: Optional[torch.device]=None
     ):
         self.device = device
 
@@ -156,19 +156,40 @@ class ReferenceMotion():
         if key_links is None:
             key_links = list(np.arange(len(self.skeleton.nodes)))
         controllable_links = sorted(list(set([idx for _, idx, __  in self.skeleton.dofs])))
-        self.n_key_links = len(key_links)
-        self.n_controllable_links = len(controllable_links)
         if type(motion_file) == str:
             self.load_motions(motion_file, self.skeleton, controllable_links, key_links)
         else:
             for m in motion_file:
                 self.load_motions(m, self.skeleton, controllable_links, key_links)
-            self.motion_weight = np.array(self.motion_weight)
+        self.prepare_data()
+
+    def prepare_data(self):
+        self.motion_length = np.array(self.motion_length)
+        self.motion_dt = np.array(self.motion_dt)
+        self.motion_n_frames = np.array(self.motion_n_frames)
+        self.motion_weight = np.array(self.motion_weight)
+        self.motion_weight /= np.sum(self.motion_weight)
+
+        self.motion_tensor = (
+            torch.cat([_[0] for _ in self.motion]).to(self.device),
+            torch.cat([_[1] for _ in self.motion]).to(self.device),
+            torch.cat((torch.cat([_[2] for _ in self.motion]), torch.cat([_[3] for _ in self.motion])),-1).to(self.device),
+            torch.cat([_[4] for _ in self.motion]).to(self.device),
+            torch.cat([_[5] for _ in self.motion]).to(self.device),
+            torch.cat([_[6] for _ in self.motion]).to(self.device)
+        )
+        self.motion_n_frames_tensor = torch.from_numpy(self.motion_n_frames-1).to(self.device)
+        self.motion_length_tensor = torch.from_numpy(self.motion_length).to(device=self.device, dtype=torch.float)
+        self.motion_dt_tensor = torch.from_numpy(self.motion_dt).to(device=self.device, dtype=torch.float)
+        self.motion_tensor_offset = torch.cumsum(torch.tensor([0]+[m[0].size(0) for m in self.motion[:-1]]), 0).to(self.device)
+        self.has_translation_joint = torch.any(self.motion_tensor[4] > 1e-6).item()
+        print("Loaded {:d} motions with a total length of {:.3f}s.".format(len(self.motion), sum(self.motion_length)))
 
     def load_motions(self, motion_file, skeleton, controllable_links, key_links):
         self.motion_length = list(self.motion_length)
         self.motion_dt = list(self.motion_dt)
         self.motion_n_frames = list(self.motion_n_frames)
+        self.motion_weight = list(self.motion_weight)
 
         if os.path.splitext(motion_file)[1] == ".yaml":
             with open(motion_file, 'r') as f:
@@ -237,12 +258,13 @@ class ReferenceMotion():
             dt = 1.0 / fps
             motion_len = dt * (n_frames - 1)
             motion_ = (
-                motion.pos[:,key_links].clone().detach().requires_grad_(False),
-                motion.orient[:,key_links].clone().detach().requires_grad_(False),
-                torch.cat((motion.lin_vel[:,key_links], motion.ang_vel[:,key_links]), -1).detach().requires_grad_(False),
-                motion.local_q[:,controllable_links].clone().detach().requires_grad_(False),
-                motion.local_p[:,controllable_links].clone().detach().requires_grad_(False),
-                motion.local_vel[:,controllable_links].clone().detach().requires_grad_(False)
+                motion.pos[:,key_links],
+                motion.orient[:,key_links],
+                motion.lin_vel[:,key_links],
+                motion.ang_vel[:,key_links],
+                motion.local_q[:,controllable_links],
+                motion.local_p[:,controllable_links],
+                motion.local_vel[:,controllable_links]
             )
 
             print("\t{:.4f}s, {:d} Hz, {:d} frames".format(motion_len, fps, n_frames))
@@ -274,13 +296,6 @@ class ReferenceMotion():
                     curr_weight *= tot_length_with_weights/tot_length
             self.motion_weight.append(curr_weight)
 
-        self.motion_length = np.array(self.motion_length)
-        self.motion_dt = np.array(self.motion_dt)
-        self.motion_n_frames = np.array(self.motion_n_frames)
-        self.motion_weight = np.divide(self.motion_weight, sum(self.motion_weight))
-
-        print("Loaded {:d} motions with a total length of {:.3f}s.".format(len(self.motion), sum(self.motion_length)))
-
     def sample(self, n, truncate_time=None):
         motion_ids = np.random.choice(len(self.motion), size=n, p=self.motion_weight, replace=True)
         phase = np.random.uniform(low=0.0, high=1.0, size=motion_ids.shape)
@@ -292,80 +307,46 @@ class ReferenceMotion():
 
     @torch.no_grad
     def state(self, motion_ids, motion_times, with_joint_tensor=True):
-        n = len(motion_ids)
-        device = self.device
-
-        n_key_links = self.n_key_links
-        link_pos0 = torch.empty((n, n_key_links, 3), dtype=torch.float)
-        link_pos1 = torch.empty((n, n_key_links, 3), dtype=torch.float)
-        link_orient0 = torch.empty((n, n_key_links, 4), dtype=torch.float)
-        link_orient1 = torch.empty((n, n_key_links, 4), dtype=torch.float)
-        link_vel = torch.empty((n, n_key_links, 6), dtype=torch.float)
-        if with_joint_tensor:
-            n_controllable_links = self.n_controllable_links
-            joint_q0 = torch.empty((n, n_controllable_links, 4), dtype=torch.float)
-            joint_q1 = torch.empty((n, n_controllable_links, 4), dtype=torch.float)
-            joint_p0 = torch.empty((n, n_controllable_links, 3), dtype=torch.float)
-            joint_p1 = torch.empty((n, n_controllable_links, 3), dtype=torch.float)
-            joint_vel = torch.empty((n, n_controllable_links, 3), dtype=torch.float)
-            joint_tensor = torch.empty((n, len(self.dofs), 2), dtype=torch.float, device=device)
-        link_tensor = torch.empty((n, n_key_links, 13), dtype=torch.float, device=device)
-
-        motion_len = self.motion_length[motion_ids]
-        num_frames = self.motion_n_frames[motion_ids]
-        dt = self.motion_dt[motion_ids]
-
-        phase = np.clip(motion_times / motion_len, 0.0, 1.0)
-        fid0 = (phase * (num_frames - 1)).astype(int)
-        fid1 = np.minimum(fid0 + 1, num_frames - 1)
-        frac = np.minimum((motion_times - fid0 * dt) / dt, 1.)
-
-        unique_ids = np.unique(motion_ids)
         motion_ids = torch.from_numpy(motion_ids)
-        fid0 = torch.from_numpy(fid0)
-        fid1 = torch.from_numpy(fid1)
-        for uid in unique_ids:
-            ids = motion_ids == uid
-            motion = self.motion[uid]
+        motion_times = torch.from_numpy(motion_times).to(device=self.device, dtype=torch.float)
+        n_frames = self.motion_n_frames_tensor[motion_ids]
+        motion_len = self.motion_length_tensor[motion_ids]
+        dt = self.motion_dt_tensor[motion_ids]
+        motion_id_offset = self.motion_tensor_offset[motion_ids]
 
-            fid0_ = fid0[ids]
-            fid1_ = fid1[ids]
+        fid0 = (motion_times / motion_len).clip_(min=0, max=1).mul_(n_frames).to(torch.int)
+        fid1 = (fid0+1).clip_(max=n_frames)
+        frac = (motion_times - fid0*dt).div_(dt).clip_(max=1).view(-1, 1, 1)
+        
+        fid0.add_(motion_id_offset)
+        fid1.add_(motion_id_offset)
 
-            link_pos0[ids] = motion[0][fid0_]
-            link_pos1[ids] = motion[0][fid1_]
-            link_orient0[ids] = motion[1][fid0_]
-            link_orient1[ids] = motion[1][fid1_]
-            link_vel[ids] = motion[2][fid0_]
+        link_pos0 = self.motion_tensor[0][fid0]
+        link_pos1 = self.motion_tensor[0][fid1]
+        link_orient0 = self.motion_tensor[1][fid0]
+        link_orient1 = self.motion_tensor[1][fid1]
+        link_vel = self.motion_tensor[2][fid0]
+        if with_joint_tensor:
+            joint_q0 = self.motion_tensor[3][fid0]
+            joint_q1 = self.motion_tensor[3][fid1]
+            if self.has_translation_joint:
+                joint_p0 = self.motion_tensor[4][fid0]
+                joint_p1 = self.motion_tensor[4][fid1]
+            joint_vel = self.motion_tensor[5][fid1]
 
-            if with_joint_tensor:
-                joint_q0[ids] = motion[3][fid0_]
-                joint_q1[ids] = motion[3][fid1_]
-                joint_p0[ids] = motion[4][fid0_]
-                joint_p1[ids] = motion[4][fid1_]
-                joint_vel[ids] = motion[5][fid0_]
-
-        link_pos0 = link_pos0.to(device)
-        link_pos1 = link_pos1.to(device)
-        link_orient0 = link_orient0.to(device)
-        link_orient1 = link_orient1.to(device)
-        link_tensor[..., 7:] = link_vel.to(device)
-        frac = torch.tensor(frac, device=link_pos0.device, dtype=link_pos0.dtype).unsqueeze_(-1)
-        one_frac = 1 - frac
-        frac_ = frac[..., None]
-        one_frac_ = one_frac[..., None]
-
-        link_tensor[..., :3] = (one_frac_*link_pos0).add_(frac_*link_pos1)
-        link_tensor[..., 3:7] = slerp(link_orient0, link_orient1, frac_)
-        if not with_joint_tensor:
+        one_frac = 1.0-frac
+        link_pos = link_pos0.mul_(one_frac).add_(frac*link_pos1)
+        link_orient = slerp(link_orient0, link_orient1, frac)
+        link_tensor = torch.cat((link_pos, link_orient, link_vel), -1)
+        if with_joint_tensor:
+            joint_q = slerp(joint_q0, joint_q1, frac)
+            if self.has_translation_joint:
+                joint_p = joint_p0.mul_(one_frac).add_(frac*joint_p1)
+                joint_pos = (quat2expmap(joint_q) + joint_p).view(joint_q.size(0), -1)[:, self.dofs]
+            else:
+                joint_pos = (quat2expmap(joint_q)).view(joint_q.size(0), -1)[:, self.dofs]
+            joint_vel = joint_vel.view(joint_q.size(0), -1)[:, self.dofs]
+            joint_tensor = torch.stack((joint_pos, joint_vel), -1)
+            return link_tensor, joint_tensor
+        else:
             return link_tensor
-
-        joint_q0 = joint_q0.to(device)
-        joint_q1 = joint_q1.to(device)
-        joint_p0 = joint_p0.to(device)
-        joint_p1 = joint_p1.to(device)
-        joint_vel = joint_vel.to(device)
-        joint_p = joint_p0.mul_(one_frac_).add_(frac_*joint_p1)
-        joint_q = slerp(joint_q0, joint_q1, frac_)
-        joint_tensor[..., 0] = quat2expmap(joint_q).add_(joint_p).view(joint_q.size(0), -1)[:, self.dofs]
-        joint_tensor[..., 1] = joint_vel.view(joint_q.size(0), -1)[:, self.dofs]
-        return link_tensor, joint_tensor

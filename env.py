@@ -591,9 +591,7 @@ class ICCGANHumanoid(Env):
         self.real_samples = []
 
     def build_motion_lib(self, motion_file):
-        n_links = self.char_link_tensor.size(1)
-        ref_motion = ReferenceMotion(motion_file=motion_file, character_model=self.character_model,
-            key_links=np.arange(n_links), device=self.device)
+        ref_motion = ReferenceMotion(motion_file=motion_file, character_model=self.character_model, device=self.device)
         root_links = [i for i, p in enumerate(ref_motion.skeleton.parents) if p == -1]
         return ref_motion, root_links
 
