@@ -888,7 +888,7 @@ def observe_iccgan(state_hist: torch.Tensor, seq_len: Optional[torch.Tensor]=Non
             origin = link_tensor[-1,:, parent_link, :3]  # N x 3
             orient = link_tensor[-1,:, parent_link,3:7]  # N x 4
         orient_inv = quatconj(orient)               # L x N x 4
-        orient_inv = orient.view(-1, n_inst, 1, 4)  # L x N x 1 x 4 or 1 x N x 1 x 4
+        orient_inv = orient_inv.view(-1, n_inst, 1, 4)  # L x N x 1 x 4 or 1 x N x 1 x 4
         origin = origin.unsqueeze(-2)               # (L x) N x 1 x 3
 
     ob_link_pos = link_pos - origin                                     # L x N x n_links x 3 
