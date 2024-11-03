@@ -30,7 +30,10 @@ def load_mjcf(filename: Union[str, Sequence[str]]):
     dof_offset = [0]
     def parse(node, pid):
         n = node.attrib.get("name")
-        p = np.array(list(map(float, node.attrib.get("pos").split())))
+        if "pos" in node.attrib:
+            p = np.array(list(map(float, node.attrib.get("pos").split())))
+        else:
+            p = np.array([0, 0, 0])
         # NOTE for body rotation offset, only the quat attribute defined directly in the body element is supported
         q = node.attrib.get("quat")
         if q is None:
@@ -45,8 +48,15 @@ def load_mjcf(filename: Union[str, Sequence[str]]):
         nid = len(nodes)-1
         has_dof = False
         for joint in node.findall("joint"):
+            if joint.attrib.get("type") == "free":
+                # root joint
+                continue
             has_dof = True
-            axis = list(map(int, joint.attrib.get("axis").split()))
+            assert "axis" in joint.attrib, joint.attrib.get("name")
+            try:
+                axis = list(map(int, joint.attrib.get("axis").split()))
+            except:
+                print("Failed to parse joint", joint.attrib.get("name"))
             assert sum(axis)==1 and 1 in axis, joint.attrib.get("name")
             dofs.append((joint.attrib.get("name"), nid, dof_offset[0]*3+axis.index(1)))
         dof_offset[0] += int(has_dof)
@@ -64,6 +74,10 @@ def load_mjcf(filename: Union[str, Sequence[str]]):
         if root is None:
             raise ValueError("Failed to find any body definition from MJCF file", f)
         freejoint = root.find("freejoint")
+        if freejoint is None:
+            basejoint = root.findall("joint")
+            if basejoint and basejoint[0].attrib.get("type") == "free":
+                freejoint = basejoint
         free_root.append(freejoint is not None)
     
         parse(root, -1)
@@ -152,10 +166,10 @@ class ReferenceMotion():
         self.motion_n_frames = []
 
         self.skeleton = load_mjcf(character_model)
-        self.dofs = [idx for _, __, idx in self.skeleton.dofs]
+        self.dofs = [d[2] for d in self.skeleton.dofs]
         if key_links is None:
             key_links = list(np.arange(len(self.skeleton.nodes)))
-        controllable_links = sorted(list(set([idx for _, idx, __  in self.skeleton.dofs])))
+        controllable_links = sorted(list(set([d[1] for d in self.skeleton.dofs])))
         if type(motion_file) == str:
             self.load_motions(motion_file, self.skeleton, controllable_links, key_links)
         else:
@@ -164,33 +178,45 @@ class ReferenceMotion():
         self.prepare_data()
 
     def prepare_data(self):
-        self.motion_length = np.array(self.motion_length)
-        self.motion_dt = np.array(self.motion_dt)
-        self.motion_n_frames = np.array(self.motion_n_frames)
-        self.motion_weight = np.array(self.motion_weight)
+        self.motion_link_pos_tensor = torch.cat([m[0] for m in self.motion]).to(self.device)
+        self.motion_link_orient_tensor = torch.cat([m[1] for m in self.motion]).to(self.device)
+        self.motion_link_vel_tensor = torch.cat((torch.cat([m[2] for m in self.motion]), torch.cat([m[3] for m in self.motion])),-1).to(self.device)
+        self.motion_joint_q_tensor = torch.cat([m[4] for m in self.motion]).to(self.device)
+        self.motion_joint_p_tensor = torch.cat([m[5] for m in self.motion]).to(self.device)
+        self.motion_joint_vel_tensor = torch.cat([m[6] for m in self.motion]).to(self.device)
+        self.motion_dt_tensor = torch.tensor([m[7] for m in self.motion], dtype=torch.float, device=self.device)
+        self.motion_n_frames_tensor = torch.tensor([m[0].size(0)-1 for m in self.motion], dtype=torch.int, device=self.device)
+        self.motion_length = np.array([m[7]*(m[0].size(0)-1) for m in self.motion])
+        self.motion_length_tensor = torch.from_numpy(self.motion_length).to(device=self.device, dtype=torch.float)
+
+        self.motion_tensor_offset = torch.cumsum(torch.tensor([0]+[m[0].size(0) for m in self.motion[:-1]]), 0).to(self.device)
+        self.has_translation_joint = torch.any(self.motion_joint_p_tensor[4] > 1e-6).item()
+
+        tot_weights, tot_length = 0, 0
+        tot_length_with_weights = 0
+        for m in self.motion:
+            w, t = m[8], m[0].size(0)-1
+            if w is None or w < 0:
+                tot_length += t
+            elif w > 0:
+                tot_weights += w
+                tot_length_with_weights += t
+                tot_length += t
+        motion_weight = []
+        for m in self.motion:
+            w, t = m[8], m[0].size(0)-1
+            if tot_length != tot_length_with_weights and (w is None or w < 0):
+                if tot_length_with_weights == 0:
+                    w = t/tot_length
+                else:
+                    w = t*tot_weights/tot_length_with_weights
+            motion_weight.append(w)
+        self.motion_weight = np.array(motion_weight)
         self.motion_weight /= np.sum(self.motion_weight)
 
-        self.motion_tensor = (
-            torch.cat([_[0] for _ in self.motion]).to(self.device),
-            torch.cat([_[1] for _ in self.motion]).to(self.device),
-            torch.cat((torch.cat([_[2] for _ in self.motion]), torch.cat([_[3] for _ in self.motion])),-1).to(self.device),
-            torch.cat([_[4] for _ in self.motion]).to(self.device),
-            torch.cat([_[5] for _ in self.motion]).to(self.device),
-            torch.cat([_[6] for _ in self.motion]).to(self.device)
-        )
-        self.motion_n_frames_tensor = torch.from_numpy(self.motion_n_frames-1).to(self.device)
-        self.motion_length_tensor = torch.from_numpy(self.motion_length).to(device=self.device, dtype=torch.float)
-        self.motion_dt_tensor = torch.from_numpy(self.motion_dt).to(device=self.device, dtype=torch.float)
-        self.motion_tensor_offset = torch.cumsum(torch.tensor([0]+[m[0].size(0) for m in self.motion[:-1]]), 0).to(self.device)
-        self.has_translation_joint = torch.any(self.motion_tensor[4] > 1e-6).item()
         print("Loaded {:d} motions with a total length of {:.3f}s.".format(len(self.motion), sum(self.motion_length)))
 
     def load_motions(self, motion_file, skeleton, controllable_links, key_links):
-        self.motion_length = list(self.motion_length)
-        self.motion_dt = list(self.motion_dt)
-        self.motion_n_frames = list(self.motion_n_frames)
-        self.motion_weight = list(self.motion_weight)
-
         if os.path.splitext(motion_file)[1] == ".yaml":
             with open(motion_file, 'r') as f:
                 motion_config = yaml.load(f, Loader=yaml.SafeLoader)
@@ -202,13 +228,10 @@ class ReferenceMotion():
                 motion_files.append(os.path.join(dirname, item['file']))
         else:
             motion_files = [motion_file]
-            motion_weights = [1.0]
+            motion_weights = [None]
 
         n_motion_files = len(motion_files)
-        tot_weights, tot_length = 0, 0
-        tot_length_with_weights = 0
-
-        for f, motion_file in enumerate(motion_files):
+        for f, (w, motion_file) in enumerate(zip(motion_weights, motion_files)):
             print("Loading {:d}/{:d} motion files: {:s}".format(f + 1, n_motion_files, motion_file))
 
             if os.path.splitext(motion_file)[1] == ".json":
@@ -257,44 +280,20 @@ class ReferenceMotion():
             
             dt = 1.0 / fps
             motion_len = dt * (n_frames - 1)
-            motion_ = (
+
+            self.motion.append((
                 motion.pos[:,key_links],
                 motion.orient[:,key_links],
                 motion.lin_vel[:,key_links],
                 motion.ang_vel[:,key_links],
                 motion.local_q[:,controllable_links],
                 motion.local_p[:,controllable_links],
-                motion.local_vel[:,controllable_links]
-            )
+                motion.local_vel[:,controllable_links],
+                dt, w
+            ))
 
             print("\t{:.4f}s, {:d} Hz, {:d} frames".format(motion_len, fps, n_frames))
 
-
-            del motion
-            self.motion.append(motion_)
-            self.motion_dt.append(dt)
-            self.motion_n_frames.append(n_frames)
-            self.motion_length.append(motion_len)
-            curr_weight = motion_weights[f]
-            if curr_weight is None or curr_weight < 0:
-                tot_length += motion_len
-            elif curr_weight > 0:
-                tot_weights += curr_weight
-                tot_length_with_weights += motion_len
-                tot_length += motion_len
-            
-        for f in range(n_motion_files):
-            curr_weight = motion_weights[f]
-            if tot_length != tot_length_with_weights:
-                curr_length = self.motion_length[f-n_motion_files]
-                if curr_weight is None or curr_weight < 0:
-                    if tot_length_with_weights == 0:
-                        curr_weight = curr_length/tot_length
-                    else:
-                        curr_weight = curr_length*tot_weights/tot_length_with_weights
-                elif curr_weight > 0:
-                    curr_weight *= tot_length_with_weights/tot_length
-            self.motion_weight.append(curr_weight)
 
     def sample(self, n, truncate_time=None):
         motion_ids = np.random.choice(len(self.motion), size=n, p=self.motion_weight, replace=True)
@@ -321,18 +320,18 @@ class ReferenceMotion():
         fid0.add_(motion_id_offset)
         fid1.add_(motion_id_offset)
 
-        link_pos0 = self.motion_tensor[0][fid0]
-        link_pos1 = self.motion_tensor[0][fid1]
-        link_orient0 = self.motion_tensor[1][fid0]
-        link_orient1 = self.motion_tensor[1][fid1]
-        link_vel = self.motion_tensor[2][fid0]
+        link_pos0 = self.motion_link_pos_tensor[fid0]
+        link_pos1 = self.motion_link_pos_tensor[fid1]
+        link_orient0 = self.motion_link_orient_tensor[fid0]
+        link_orient1 = self.motion_link_orient_tensor[fid1]
+        link_vel = self.motion_link_vel_tensor[fid0]
         if with_joint_tensor:
-            joint_q0 = self.motion_tensor[3][fid0]
-            joint_q1 = self.motion_tensor[3][fid1]
+            joint_q0 = self.motion_joint_q_tensor[fid0]
+            joint_q1 = self.motion_joint_q_tensor[fid1]
             if self.has_translation_joint:
-                joint_p0 = self.motion_tensor[4][fid0]
-                joint_p1 = self.motion_tensor[4][fid1]
-            joint_vel = self.motion_tensor[5][fid1]
+                joint_p0 = self.motion_joint_p_tensor[fid0]
+                joint_p1 = self.motion_joint_p_tensor[fid1]
+            joint_vel = self.motion_joint_vel_tensor[fid1]
 
         one_frac = 1.0-frac
         link_pos = link_pos0.mul_(one_frac).add_(frac*link_pos1)
