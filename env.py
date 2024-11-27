@@ -794,8 +794,8 @@ class ICCGANHumanoid(Env):
                             key_links = [0] + [_ for _ in key_links if _ != 0] # root link is the first key links
                             key_links_index = None # all links in the key link list are key links for observation
                         else:
-                            key_links = [0] + key_links # the root link in the key link list but not for observation
                             key_links_index = list(range(1, len(key_links)+1))
+                            key_links = [0] + key_links # the root link in the key link list but not for observation
                     else:
                         if config.parent_link in key_links:
                             key_links_index = None
