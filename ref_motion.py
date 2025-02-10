@@ -306,8 +306,9 @@ class ReferenceMotion():
 
     @torch.no_grad
     def state(self, motion_ids, motion_times, with_joint_tensor=True):
-        motion_ids = torch.from_numpy(motion_ids)
-        motion_times = torch.from_numpy(motion_times).to(device=self.device, dtype=torch.float)
+        if not torch.is_tensor(motion_ids):
+            motion_ids = torch.from_numpy(motion_ids)
+            motion_times = torch.from_numpy(motion_times).to(device=self.device, dtype=torch.float)
         n_frames = self.motion_n_frames_tensor[motion_ids]
         motion_len = self.motion_length_tensor[motion_ids]
         dt = self.motion_dt_tensor[motion_ids]
@@ -325,6 +326,11 @@ class ReferenceMotion():
         link_orient0 = self.motion_link_orient_tensor[fid0]
         link_orient1 = self.motion_link_orient_tensor[fid1]
         link_vel = self.motion_link_vel_tensor[fid0]
+
+        one_frac = 1.0-frac
+        link_pos = (link_pos0*one_frac).add_(frac*link_pos1)
+        link_orient = slerp(link_orient0, link_orient1, frac)
+        link_tensor = torch.cat((link_pos, link_orient, link_vel), -1)
         if with_joint_tensor:
             joint_q0 = self.motion_joint_q_tensor[fid0]
             joint_q1 = self.motion_joint_q_tensor[fid1]
@@ -332,20 +338,14 @@ class ReferenceMotion():
                 joint_p0 = self.motion_joint_p_tensor[fid0]
                 joint_p1 = self.motion_joint_p_tensor[fid1]
             joint_vel = self.motion_joint_vel_tensor[fid1]
-
-        one_frac = 1.0-frac
-        link_pos = link_pos0.mul_(one_frac).add_(frac*link_pos1)
-        link_orient = slerp(link_orient0, link_orient1, frac)
-        link_tensor = torch.cat((link_pos, link_orient, link_vel), -1)
-        if with_joint_tensor:
             joint_q = slerp(joint_q0, joint_q1, frac)
+            joint_pos = quat2expmap(joint_q)
             if self.has_translation_joint:
-                joint_p = joint_p0.mul_(one_frac).add_(frac*joint_p1)
-                joint_pos = (quat2expmap(joint_q) + joint_p).view(joint_q.size(0), -1)[:, self.dofs]
-            else:
-                joint_pos = (quat2expmap(joint_q)).view(joint_q.size(0), -1)[:, self.dofs]
-            joint_vel = joint_vel.view(joint_q.size(0), -1)[:, self.dofs]
-            joint_tensor = torch.stack((joint_pos, joint_vel), -1)
+                joint_p = (joint_p0*one_frac).add_(frac*joint_p1)
+                joint_pos += joint_p
+            joint_tensor = torch.stack((
+                joint_pos.view(joint_q.size(0), -1)[:, self.dofs],
+                joint_vel.view(joint_q.size(0), -1)[:, self.dofs]
+            ), -1)
             return link_tensor, joint_tensor
-        else:
-            return link_tensor
+        return link_tensor
