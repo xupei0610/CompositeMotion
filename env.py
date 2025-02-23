@@ -5,9 +5,6 @@ import torch
 
 from utils import heading_zup, axang2quat, rotatepoint, quatconj, quatmultiply, quatdiff_normalized
 
-def parse_kwarg(kwargs: dict, key: str, default_val: Any):
-    return kwargs[key] if key in kwargs else default_val
-
 class DiscriminatorConfig(object):
     def __init__(self,
         key_links: Optional[List[str]]=None, ob_horizon: Optional[int]=None, 
@@ -467,13 +464,13 @@ class ICCGANHumanoid(Env):
         motion_file: str,
         discriminators: Dict[str, DiscriminatorConfig],
     **kwargs):
-        contactable_links = parse_kwarg(kwargs, "contactable_links", self.CONTACTABLE_LINKS)
-        goal_reward_weight = parse_kwarg(kwargs, "goal_reward_weight", self.GOAL_REWARD_WEIGHT)
-        self.enable_goal_timer = parse_kwarg(kwargs, "enable_goal_timer", self.ENABLE_GOAL_TIMER)
-        self.goal_tensor_dim = parse_kwarg(kwargs, "goal_tensor_dim", self.GOAL_TENSOR_DIM)
-        self.ob_horizon = parse_kwarg(kwargs, "ob_horizon", self.OB_HORIZON)
-        self.key_links = parse_kwarg(kwargs, "key_links", self.KEY_LINKS)
-        self.parent_link = parse_kwarg(kwargs, "parent_link", self.PARENT_LINK)
+        contactable_links = kwargs.get("contactable_links", self.CONTACTABLE_LINKS)
+        goal_reward_weight = kwargs.get("goal_reward_weight", self.GOAL_REWARD_WEIGHT)
+        self.enable_goal_timer = kwargs.get("enable_goal_timer", self.ENABLE_GOAL_TIMER)
+        self.goal_tensor_dim = kwargs.get("goal_tensor_dim", self.GOAL_TENSOR_DIM)
+        self.ob_horizon = kwargs.get("ob_horizon", self.OB_HORIZON)
+        self.key_links = kwargs.get("key_links", self.KEY_LINKS)
+        self.parent_link = kwargs.get("parent_link", self.PARENT_LINK)
         super().__init__(*args, **kwargs)
 
         n_envs = len(self.envs)
@@ -941,15 +938,15 @@ class ICCGANHumanoidTarget(ICCGANHumanoid):
     SHARP_TURN_RATE = 1
 
     def __init__(self, *args, **kwargs):
-        self.goal_radius = parse_kwarg(kwargs, "goal_radius", self.GOAL_RADIUS)
-        self.sharp_turn_rate = parse_kwarg(kwargs, "sharp_turn_rate", self.SHARP_TURN_RATE)
-        self.sp_lower_bound = parse_kwarg(kwargs, "sp_lower_bound", self.SP_LOWER_BOUND)
-        self.sp_upper_bound = parse_kwarg(kwargs, "sp_upper_bound", self.SP_UPPER_BOUND)
-        self.goal_timer_range = parse_kwarg(kwargs, "goal_timer_range", self.GOAL_TIMER_RANGE)
-        self.goal_sp_mean = parse_kwarg(kwargs, "goal_sp_mean", self.GOAL_SP_MEAN)
-        self.goal_sp_std = parse_kwarg(kwargs, "goal_sp_std", self.GOAL_SP_STD)
-        self.goal_sp_min = parse_kwarg(kwargs, "goal_sp_min", self.GOAL_SP_MIN)
-        self.goal_sp_max = parse_kwarg(kwargs, "goal_sp_max", self.GOAL_SP_MAX)
+        self.goal_radius = kwargs.get("goal_radius", self.GOAL_RADIUS)
+        self.sharp_turn_rate = kwargs.get("sharp_turn_rate", self.SHARP_TURN_RATE)
+        self.sp_lower_bound = kwargs.get("sp_lower_bound", self.SP_LOWER_BOUND)
+        self.sp_upper_bound = kwargs.get("sp_upper_bound", self.SP_UPPER_BOUND)
+        self.goal_timer_range = kwargs.get("goal_timer_range", self.GOAL_TIMER_RANGE)
+        self.goal_sp_mean = kwargs.get("goal_sp_mean", self.GOAL_SP_MEAN)
+        self.goal_sp_std = kwargs.get("goal_sp_std", self.GOAL_SP_STD)
+        self.goal_sp_min = kwargs.get("goal_sp_min", self.GOAL_SP_MIN)
+        self.goal_sp_max = kwargs.get("goal_sp_max", self.GOAL_SP_MAX)
         super().__init__(*args, **kwargs)
 
     def update_viewer(self):
@@ -1326,12 +1323,12 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
     DWELL_TIME = 12
 
     def __init__(self, *args, **kwargs):
-        self.n_balls = parse_kwarg(kwargs, "n_balls", self.N_BALLS)
+        self.n_balls = kwargs.get("n_balls", self.N_BALLS)
         assert(self.n_balls > 1)
-        self.throw_interval =  parse_kwarg(kwargs, "throw_interval", self.THROW_INTERVAL)
-        self.dwell_time = parse_kwarg(kwargs, "dwell_time", self.DWELL_TIME)
-        self.ball_radius = parse_kwarg(kwargs, "ball_radius", self.BALL_RADIUS)
-        self.ball_mass = parse_kwarg(kwargs, "ball_mass", self.BALL_MASS)
+        self.throw_interval =  kwargs.get("throw_interval", self.THROW_INTERVAL)
+        self.dwell_time = kwargs.get("dwell_time", self.DWELL_TIME)
+        self.ball_radius = kwargs.get("ball_radius", self.BALL_RADIUS)
+        self.ball_mass = kwargs.get("ball_mass", self.BALL_MASS)
         self.ball_properties = self.BALL_PROPERTIES.copy()
         if "ball_properties" in kwargs:
             self.ball_properties.update(kwargs["ball_properties"])
