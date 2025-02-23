@@ -35,6 +35,9 @@ def load_mjcf(filename: Union[str, Sequence[str]]):
         else:
             p = np.array([0, 0, 0])
         # NOTE for body rotation offset, only the quat attribute defined directly in the body element is supported
+        # NOTE only support one joint for one body or three joints in xyz order
+        assert all(_ is None for _ in [node.attrib.get("axisangle"), node.attrib.get("xyaxes"), node.attrib.get("zaxis"), node.attrib.get("euler")]), \
+            "Unsupported rotation mode detected for body {}. For body rotation offset, only the quat attribute defined directly in the body element is supported".format(n)
         q = node.attrib.get("quat")
         if q is None:
             q = [0., 0., 0., 1.]
@@ -46,20 +49,20 @@ def load_mjcf(filename: Union[str, Sequence[str]]):
         t.append(p)
         r.append(q)
         nid = len(nodes)-1
-        has_dof = False
-        for joint in node.findall("joint"):
-            if joint.attrib.get("type") == "free":
-                # root joint
-                continue
-            has_dof = True
-            assert "axis" in joint.attrib, joint.attrib.get("name")
-            try:
-                axis = list(map(int, joint.attrib.get("axis").split()))
-            except:
-                print("Failed to parse joint", joint.attrib.get("name"))
-            assert sum(axis)==1 and 1 in axis, joint.attrib.get("name")
-            dofs.append((joint.attrib.get("name"), nid, dof_offset[0]*3+axis.index(1)))
-        dof_offset[0] += int(has_dof)
+        joints = [joint for joint in node.findall("joint") if joint.attrib.get("type") != "free"]
+        if joints:
+            assert len(joints) == 1 or len(joints) == 3, "No support to body ("+n+") who has joints more than 1 and not 3."
+            axis_ = -1
+            for joint in joints:
+                assert "axis" in joint.attrib, joint.attrib.get("name")
+                try:
+                    axis = list(map(int, joint.attrib.get("axis").split()))
+                    assert sum(axis)==1 and 1 in axis
+                except:
+                    raise ValueError("No support to body ("+n+") with multiple irregular joints.")
+                assert axis <= axis_, "No support to body ("+n+") whose joints are stacked not in xyz order."
+                dofs.append((joint.attrib.get("name"), nid, dof_offset[0]*3+axis.index(1)))
+            dof_offset[0] += 1
         for child in node.findall("body"):
             parse(child, nid)
 
@@ -70,17 +73,17 @@ def load_mjcf(filename: Union[str, Sequence[str]]):
         world = doc.find("worldbody")
         if world is None:
             raise ValueError("Failed to find worldbody definition from MJCF file", f)
-        root = world.find("body")
-        if root is None:
+        roots = world.findall("body")
+        if roots is None:
             raise ValueError("Failed to find any body definition from MJCF file", f)
-        freejoint = root.find("freejoint")
-        if freejoint is None:
-            basejoint = root.findall("joint")
-            if basejoint and basejoint[0].attrib.get("type") == "free":
-                freejoint = basejoint
-        free_root.append(freejoint is not None)
-    
-        parse(root, -1)
+        for root in roots:
+            freejoint = root.find("freejoint")
+            if freejoint is None:
+                basejoint = root.findall("joint")
+                if basejoint and basejoint[0].attrib.get("type") == "free":
+                    freejoint = basejoint
+            free_root.append(freejoint is not None)
+            parse(root, -1)
     return Skeleton(
         nodes = nodes,
         parents = parents,
@@ -165,16 +168,16 @@ class ReferenceMotion():
         self.motion_dt = []
         self.motion_n_frames = []
 
-        self.skeleton = load_mjcf(character_model)
-        self.dofs = [d[2] for d in self.skeleton.dofs]
+        skeleton = load_mjcf(character_model)
+        self.dofs = [d[2] for d in skeleton.dofs]
         if key_links is None:
-            key_links = list(np.arange(len(self.skeleton.nodes)))
-        controllable_links = sorted(list(set([d[1] for d in self.skeleton.dofs])))
+            key_links = [i for i in range(len(skeleton.nodes))]
+        controllable_links = sorted(list(set([d[1] for d in skeleton.dofs])))
         if type(motion_file) == str:
-            self.load_motions(motion_file, self.skeleton, controllable_links, key_links)
+            self.load_motions(motion_file, skeleton, controllable_links, key_links)
         else:
             for m in motion_file:
-                self.load_motions(m, self.skeleton, controllable_links, key_links)
+                self.load_motions(m, skeleton, controllable_links, key_links)
         self.prepare_data()
 
     def prepare_data(self):
@@ -182,7 +185,6 @@ class ReferenceMotion():
         self.motion_link_orient_tensor = torch.cat([m[1] for m in self.motion]).to(self.device)
         self.motion_link_vel_tensor = torch.cat((torch.cat([m[2] for m in self.motion]), torch.cat([m[3] for m in self.motion])),-1).to(self.device)
         self.motion_joint_q_tensor = torch.cat([m[4] for m in self.motion]).to(self.device)
-        self.motion_joint_p_tensor = torch.cat([m[5] for m in self.motion]).to(self.device)
         self.motion_joint_vel_tensor = torch.cat([m[6] for m in self.motion]).to(self.device)
         self.motion_dt_tensor = torch.tensor([m[7] for m in self.motion], dtype=torch.float, device=self.device)
         self.motion_n_frames_tensor = torch.tensor([m[0].size(0)-1 for m in self.motion], dtype=torch.int, device=self.device)
@@ -190,7 +192,11 @@ class ReferenceMotion():
         self.motion_length_tensor = torch.from_numpy(self.motion_length).to(device=self.device, dtype=torch.float)
 
         self.motion_tensor_offset = torch.cumsum(torch.tensor([0]+[m[0].size(0) for m in self.motion[:-1]]), 0).to(self.device)
-        self.has_translation_joint = torch.any(self.motion_joint_p_tensor[4] > 1e-6).item()
+        self.has_translation_joint = any(torch.any(m[5] > 1e-6).item() for m in self.motion)
+        if self.has_translation_joint:
+            self.motion_joint_p_tensor = torch.cat([m[5] for m in self.motion]).to(self.device)
+        else:
+            self.motion_joint_p_tensor = None
 
         tot_weights, tot_length = 0, 0
         tot_length_with_weights = 0
