@@ -76,6 +76,7 @@ class Env(object):
         self.gym.set_actor_root_state_tensor(self.sim, gymtorch.unwrap_tensor(self.root_tensor))
         self.joint_tensor.fill_(0)
         self.gym.set_dof_state_tensor(self.sim, gymtorch.unwrap_tensor(self.joint_tensor))
+        self.root_updated_actors, self.dof_updated_actors = [], []
         self.refresh_tensors()
         self.train()
         self.viewer_pause = False
@@ -303,6 +304,8 @@ class Env(object):
         else:
             self.action_tensor = torch.zeros_like(self.joint_tensor[..., 0])
 
+        self.root_links = [0] + [self.gym.get_actor_rigid_body_count(self.envs[0], actor)-1 for actor in self.actors[:-1]]
+
     def setup_action_normalizer(self):
         actuated_dof = []
         dof_cnts = 0
@@ -355,9 +358,9 @@ class Env(object):
         return self.obs, self.info
     
     def reset_envs(self, env_ids):
-        ref_root_tensor, ref_link_tensor, ref_joint_tensor = self.init_state(env_ids)
+        ref_link_tensor, ref_joint_tensor = self.init_state(env_ids)
 
-        self.root_tensor[env_ids] = ref_root_tensor
+        self.root_tensor[env_ids] = ref_link_tensor[:, self.root_links]
         self.link_tensor[env_ids] = ref_link_tensor
         if self.action_tensor is None:
             self.joint_tensor[env_ids] = ref_joint_tensor
@@ -583,14 +586,12 @@ class ICCGANHumanoid(Env):
         else:
             self.disc_dim = {}
 
-        self.ref_motion, self.root_links = self.build_motion_lib(motion_file)
+        self.ref_motion = self.build_motion_lib(motion_file)
         self.sampling_workers = []
         self.real_samples = []
 
     def build_motion_lib(self, motion_file):
-        ref_motion = ReferenceMotion(motion_file=motion_file, character_model=self.character_model, device=self.device)
-        root_links = [i for i, p in enumerate(ref_motion.skeleton.parents) if p == -1]
-        return ref_motion, root_links
+        return ReferenceMotion(motion_file=motion_file, character_model=self.character_model, device=self.device)
 
     def __del__(self):
         if hasattr(self, "sampling_workers"):
@@ -661,7 +662,7 @@ class ICCGANHumanoid(Env):
         if ground_height is not None:
             ref_link_tensor[:, :, 2] += ground_height.unsqueeze_(1)
 
-        return ref_link_tensor[:, self.root_links], ref_link_tensor, ref_joint_tensor
+        return ref_link_tensor, ref_joint_tensor
     
     def create_tensors(self):
         super().create_tensors()
