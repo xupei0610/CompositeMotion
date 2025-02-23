@@ -36,6 +36,7 @@ def load_mjcf(filename: Union[str, Sequence[str]]):
             p = np.array([0, 0, 0])
         # NOTE for body rotation offset, only the quat attribute defined directly in the body element is supported
         # NOTE only support one joint for one body or three joints in xyz order
+        # NOTE only support joint at the zero position of its body link
         assert all(_ is None for _ in [node.attrib.get("axisangle"), node.attrib.get("xyaxes"), node.attrib.get("zaxis"), node.attrib.get("euler")]), \
             "Unsupported rotation mode detected for body {}. For body rotation offset, only the quat attribute defined directly in the body element is supported".format(n)
         q = node.attrib.get("quat")
@@ -52,15 +53,14 @@ def load_mjcf(filename: Union[str, Sequence[str]]):
         joints = [joint for joint in node.findall("joint") if joint.attrib.get("type") != "free"]
         if joints:
             assert len(joints) == 1 or len(joints) == 3, "No support to body ("+n+") who has joints more than 1 and not 3."
-            axis_ = -1
             for joint in joints:
+                assert "pos" not in joint.attrib or all(p == 0 for p in list(map(float, joint.attrib.get("pos").split())))
                 assert "axis" in joint.attrib, joint.attrib.get("name")
                 try:
                     axis = list(map(int, joint.attrib.get("axis").split()))
                     assert sum(axis)==1 and 1 in axis
                 except:
                     raise ValueError("No support to body ("+n+") with multiple irregular joints.")
-                assert axis <= axis_, "No support to body ("+n+") whose joints are stacked not in xyz order."
                 dofs.append((joint.attrib.get("name"), nid, dof_offset[0]*3+axis.index(1)))
             dof_offset[0] += 1
         for child in node.findall("body"):
