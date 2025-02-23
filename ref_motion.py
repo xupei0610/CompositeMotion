@@ -223,7 +223,34 @@ class ReferenceMotion():
         print("Loaded {:d} motions with a total length of {:.3f}s.".format(len(self.motion), sum(self.motion_length)))
 
     def load_motions(self, motion_file, skeleton, controllable_links, key_links):
-        if os.path.splitext(motion_file)[1] == ".yaml":
+        ext = os.path.splitext(motion_file)[1]
+        if ext == ".joblib":
+            if "joblib" not in globals():
+                import joblib
+            motions = joblib.load(motion_file)
+            motion_len = 0
+            n_frames = 0
+            for motion in motions:
+                dt = 1.0 / motion.fps
+                weight = None
+                self.motion.append((
+                    motion.pos[:,key_links],
+                    motion.orient[:,key_links],
+                    motion.lin_vel[:,key_links],
+                    motion.ang_vel[:,key_links],
+                    motion.local_q[:,controllable_links],
+                    motion.local_p[:,controllable_links],
+                    motion.local_vel[:,controllable_links],
+                    dt, weight
+                ))
+                n_frame = len(motion.pos)
+                n_frames += n_frame
+                motion_len += dt*n_frame
+            print("Loading {:d} motions from {:s}".format(len(motions), motion_file))
+            print("\t{:.4f}s, {:d} frames".format(motion_len, n_frames))
+            return
+        
+        if ext == ".yaml":
             with open(motion_file, 'r') as f:
                 motion_config = yaml.load(f, Loader=yaml.SafeLoader)
             dirname = os.path.dirname(motion_file)
@@ -240,7 +267,7 @@ class ReferenceMotion():
         for f, (w, motion_file) in enumerate(zip(motion_weights, motion_files)):
             print("Loading {:d}/{:d} motion files: {:s}".format(f + 1, n_motion_files, motion_file))
 
-            if os.path.splitext(motion_file)[1] == ".json":
+            if ext == ".json":
                 with open(motion_file, "r") as _:
                     motion_data = json.load(_)
 
