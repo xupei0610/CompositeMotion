@@ -482,19 +482,19 @@ class ICCGANHumanoid(Env):
 
         if contactable_links is None:
             self.contactable_links = None
-        elif contactable_links:
-            contact = np.zeros((n_envs, n_links), dtype=bool)
-            for link in contactable_links:
+        else:
+            contact = np.full((n_envs, n_links), 0.15)
+            if type(contactable_links) != dict:
+                contactable_links = {link: -10000 for link in contactable_links}
+            for link, h in contactable_links.items():
                 lids = []
                 for actor in self.actors:
                     lid = self.gym.find_actor_rigid_body_handle(self.envs[0], actor, link)
                     if lid >= 0:
-                        contact[:, lid] = True
+                        contact[:, lid] = h
                         lids.append(lid)
-                assert len(lids) > 0, "Unrecognized contactable link {}".format(link)
-            self.contactable_links = torch.tensor(contact).to(self.contact_force_tensor.device)
-        else:
-            self.contactable_links = False
+                if not lids: print("[Warning] Unrecognized contactable link {}".format(link))
+            self.contactable_links = torch.tensor(contact, dtype=torch.float32).to(self.contact_force_tensor.device)
 
         if goal_reward_weight is not None:
             reward_weights = torch.empty((len(self.envs), self.rew_dim), dtype=torch.float32, device=self.device)
@@ -637,17 +637,13 @@ class ICCGANHumanoid(Env):
     def termination_check(self):
         if self.contactable_links is None:
             return torch.zeros_like(self.done)
-        masked_contact = self.char_contact_force_tensor.clone()
-        if self.contactable_links is not False:
-            masked_contact[self.contactable_links] = 0          # N x n_links x 3
 
-        contacted = torch.any(masked_contact.abs_() > 1., dim=-1)      # N x n_links
-
+        contacted = torch.any(self.char_contact_force_tensor.abs() > 1., dim=-1)      # N x n_links
         ground_height = self.ground_height(self.char_root_tensor[:, :3])
-        if ground_height is not None:
-            low_threshold = ground_height.add_(0.15).unsqueeze_(1)
+        if ground_height is None:
+            low_threshold = self.contactable_links  # N x n_links
         else:
-            low_threshold = 0.15                                      # N x n_links
+            low_threshold = self.contactable_links+ground_height.unsqueeze_(1)
         too_low = self.link_pos[..., self.UP_AXIS] < low_threshold    # N x n_links
 
         terminate = torch.any(torch.logical_and(contacted, too_low), -1)    # N x
