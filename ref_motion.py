@@ -74,7 +74,7 @@ def load_mjcf(filename: Union[str, Sequence[str]]):
         if world is None:
             raise ValueError("Failed to find worldbody definition from MJCF file", f)
         roots = world.findall("body")
-        if roots is None:
+        if not roots:
             raise ValueError("Failed to find any body definition from MJCF file", f)
         for root in roots:
             freejoint = root.find("freejoint")
