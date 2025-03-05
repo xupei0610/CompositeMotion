@@ -304,7 +304,7 @@ class Env(object):
         else:
             self.action_tensor = torch.zeros_like(self.joint_tensor[..., 0])
 
-        self.root_links = [0] + [self.gym.get_actor_rigid_body_count(self.envs[0], actor)-1 for actor in self.actors[:-1]]
+        self.root_links = list(np.cumsum([0] + [self.gym.get_actor_rigid_body_count(self.envs[0], actor) for actor in self.actors])[:-1])
 
     def setup_action_normalizer(self):
         actuated_dof = []
