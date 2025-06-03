@@ -304,7 +304,8 @@ class Env(object):
         else:
             self.action_tensor = torch.zeros_like(self.joint_tensor[..., 0])
 
-        self.root_links = list(np.cumsum([0] + [self.gym.get_actor_rigid_body_count(self.envs[0], actor) for actor in self.actors])[:-1])
+        # self.root_links = list(np.cumsum([0] + [self.gym.get_actor_rigid_body_count(self.envs[0], actor) for actor in self.actors])[:-1])
+        self.root_links = list(np.cumsum([0] + [self.gym.get_actor_rigid_body_count(self.envs[0], actor) for actor in range(self.gym.get_actor_count(self.envs[0]))])[:-1])
 
     def setup_action_normalizer(self):
         actuated_dof = []
@@ -1407,7 +1408,7 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
 
 
     def init_state(self, env_ids):
-        ref_root_tensor, ref_link_tensor, ref_joint_tensor = super().init_state(env_ids)
+        ref_link_tensor, ref_joint_tensor = super().init_state(env_ids)
 
         n_balls = self.ball_attach.size(1)
         for i in range(n_balls):
@@ -1429,9 +1430,8 @@ class ICCGANHumanoidJugglingTarget(ICCGANHumanoidTarget):
         self.miss_left[env_ids] = False
         self.miss_right[env_ids] = False
 
-        ref_root_tensor = torch.cat((ref_root_tensor, ball_root_tensor), 1)
         ref_link_tensor = torch.cat((ref_link_tensor, ball_root_tensor), 1)
-        return ref_root_tensor, ref_link_tensor, ref_joint_tensor
+        return ref_link_tensor, ref_joint_tensor
 
     def refresh_tensors(self):
         super().refresh_tensors()
