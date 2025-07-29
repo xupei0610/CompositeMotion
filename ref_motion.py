@@ -223,10 +223,10 @@ class ReferenceMotion():
         if ext == ".joblib":
             if "joblib" not in globals():
                 import joblib
-            motions = joblib.load(motion_file)
+            data = joblib.load(motion_file)
             motion_len = 0
             n_frames = 0
-            for motion in motions:
+            for motion in data:
                 dt = 1.0 / motion.fps
                 weight = None
                 motions.append((
